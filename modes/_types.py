@@ -71,11 +71,11 @@ class EventState:
     event_id: str
     context: str
     state: str
-    posterior_prob: float = 1.0
+    state_confidence: float = 1.0
 
     @property
     def local_fdr(self) -> float:
-        return 1.0 - self.posterior_prob
+        return 1.0 - self.state_confidence
 
 
 @dataclass
@@ -102,5 +102,5 @@ class EventResult:
     rna_after_atac_pval: float
     rna_after_atac_fdr: float
     state: str
-    posterior: float
+    confidence: float
     quality_score: float

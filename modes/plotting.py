@@ -215,7 +215,7 @@ def plot_quality_distribution(results) -> "plt.Figure":
     return fig
 
 
-def plot_network(results, min_posterior: float = 0.5) -> "plt.Figure":
+def plot_network(results, min_confidence: float = 0.5) -> "plt.Figure":
     """Visualize event network (TF->peak->gene) with state coloring."""
     try:
         import networkx as nx
@@ -228,12 +228,12 @@ def plot_network(results, min_posterior: float = 0.5) -> "plt.Figure":
     G = nx.Graph()
 
     top_events = results.event_table[
-        results.event_table["posterior"] >= min_posterior
+        results.event_table["confidence"] >= min_confidence
     ]
 
     # Show top events only
     if len(top_events) > 100:
-        top_events = top_events.nlargest(50, "posterior")
+        top_events = top_events.nlargest(50, "confidence")
 
     for _, row in top_events.iterrows():
         gene_node = f"g:{row['gene']}"

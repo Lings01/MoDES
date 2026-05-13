@@ -235,7 +235,12 @@ class ConditionalDecomposition:
             cond_col = cond.astype(float)
         else:
             categories = sorted(set(cond))
-            cond_col = (cond == categories[1]).astype(float) if len(categories) == 2 else pd.Categorical(cond, categories=categories).codes.astype(float)
+            if len(categories) != 2:
+                raise NotImplementedError(
+                    "MoDES v0.1 supports only binary condition. "
+                    "Please run pairwise contrasts or implement a contrast matrix."
+                )
+            cond_col = (cond == categories[1]).astype(float)
 
         X_cols = [np.ones(n), cond_col]
 
@@ -259,4 +264,15 @@ class ConditionalDecomposition:
             for d in sorted(set(donors))[1:]:
                 X_cols.append((donors == d).astype(float))
 
-        return np.column_stack(X_cols)
+        X = np.column_stack(X_cols)
+
+        # Rank check
+        rank = np.linalg.matrix_rank(X)
+        if rank < X.shape[1]:
+            raise ValueError(
+                f"Design matrix is rank deficient: rank={rank}, "
+                f"n_cols={X.shape[1]}. "
+                "Check confounding among condition, donor, batch, and covariates."
+            )
+
+        return X

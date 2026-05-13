@@ -107,3 +107,51 @@ class TestNBGLMFitting:
         effect = list(effects.values())[0]
         assert effect.convergence
         assert not np.isnan(effect.coef)
+
+
+def test_multiclass_condition_not_supported_yet(synthetic_bulk_data_small):
+    """Multi-class condition should raise NotImplementedError."""
+    data, _, _ = synthetic_bulk_data_small
+    data.obs["condition"] = ["ctrl", "drugA", "drugB", "ctrl", "drugA",
+                              "drugB", "ctrl", "drugA", "drugB", "ctrl"]
+    estimator = EffectEstimator(condition_col="condition")
+    with pytest.raises(NotImplementedError):
+        estimator.estimate_rna_effects(data, list(data.gene_names[:3]))
+
+
+def test_rank_deficient_design_raises(synthetic_bulk_data_small):
+    """Condition confounded with donor should raise rank deficient error."""
+    data, _, tss_map = synthetic_bulk_data_small
+
+    # Make condition perfectly confounded with a covariate
+    data.obs["confounded"] = ["A"] * 5 + ["B"] * 5
+
+    from modes import MoDES
+    modes = MoDES(
+        data=data,
+        tss_map=tss_map,
+        condition_col="condition",
+        covariate_cols=["confounded"],
+    )
+    with pytest.raises(ValueError, match="rank deficient"):
+        modes.run()
+
+
+def test_multiclass_condition_in_decompose_raises(synthetic_bulk_data_small):
+    """Multi-class condition should raise in decompose too."""
+    data, _, _ = synthetic_bulk_data_small
+    data.obs["condition"] = ["ctrl", "drugA", "drugB", "ctrl", "drugA",
+                              "drugB", "ctrl", "drugA", "drugB", "ctrl"]
+
+    from modes.decompose import ConditionalDecomposition
+    dec = ConditionalDecomposition(condition_col="condition")
+    import pandas as pd
+    events = pd.DataFrame([{
+        "event_id": "e1",
+        "gene": data.gene_names[0],
+        "peak_id": data.peak_names[0],
+    }])
+    atac_eff = {}
+    rna_eff = {}
+    with pytest.raises(NotImplementedError):
+        dec.decompose(data, events, atac_eff, rna_eff)

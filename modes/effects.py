@@ -164,11 +164,12 @@ class EffectEstimator:
         else:
             # Categorical: create dummy with first category as reference
             categories = sorted(set(cond))
-            if len(categories) == 2:
-                cond_col = (cond == categories[1]).astype(float)
-            else:
-                # Multi-category: use first as reference
-                cond_col = pd.Categorical(cond, categories=categories).codes.astype(float)
+            if len(categories) != 2:
+                raise NotImplementedError(
+                    "MoDES v0.1 supports only binary condition. "
+                    "Please run pairwise contrasts or implement a contrast matrix."
+                )
+            cond_col = (cond == categories[1]).astype(float)
 
         # Start with intercept + condition
         X_cols = [np.ones(n), cond_col]
@@ -203,6 +204,16 @@ class EffectEstimator:
                 col_names.append(f"donor_{d}")
 
         X = np.column_stack(X_cols)
+
+        # Rank check
+        rank = np.linalg.matrix_rank(X)
+        if rank < X.shape[1]:
+            raise ValueError(
+                f"Design matrix is rank deficient: rank={rank}, "
+                f"n_cols={X.shape[1]}. "
+                "Check confounding among condition, donor, batch, and covariates."
+            )
+
         return X
 
     def _fit_nb_glm(
@@ -212,20 +223,19 @@ class EffectEstimator:
         offset: np.ndarray = None,
         feature_name: str = "",
     ) -> ModalityEffect:
-        """
-        Fit NB GLM for a single feature.
-
-        y : (n,) count array
-        X : (n, p) design matrix
-        offset : (n,) log library size offset
-        """
+        """Fit NB GLM for a single feature."""
         result = _safe_fit_nb_glm(y, X, offset)
 
         if result is None:
             return ModalityEffect(
                 coef=np.nan, se=np.nan, z_score=0.0, p_value=1.0,
                 convergence=False,
-                model_summary={"error": "GLM did not converge"},
+                model_summary={
+                    "model_used": "failed",
+                    "convergence": False,
+                    "dropped_covariates": False,
+                    "warning": "GLM did not converge at any level",
+                },
             )
 
         # Condition coefficient is at index 1 (after intercept)
@@ -244,6 +254,10 @@ class EffectEstimator:
         z = coef / se
         pval = 2 * scipy_stats.norm.sf(abs(z))
 
+        dropped_covariates = bool(getattr(result, "_modes_dropped_covariates", False))
+        model_used = "nb_simple_fallback" if dropped_covariates else "nb_fixed_alpha"
+        warning = "Full model failed; used intercept + condition only." if dropped_covariates else ""
+
         return ModalityEffect(
             coef=float(coef),
             se=float(se),
@@ -251,9 +265,15 @@ class EffectEstimator:
             p_value=float(pval),
             convergence=bool(getattr(result, "converged", False)),
             model_summary={
+                "family": "negative_binomial",
+                "alpha": 1.0,
+                "alpha_estimated": False,
+                "model_used": model_used,
                 "aic": float(getattr(result, "aic", np.nan)),
                 "deviance": float(getattr(result, "deviance", np.nan)),
                 "df_resid": int(getattr(result, "df_resid", 0)),
+                "dropped_covariates": dropped_covariates,
+                "warning": warning,
             },
         )
 
@@ -321,7 +341,7 @@ def _safe_fit_nb_glm(
         else:
             offset_adj = np.zeros(len(y))
 
-        # Try NB with estimated alpha
+        # Try NB GLM with fixed/default alpha
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = sm.GLM(
@@ -362,7 +382,8 @@ def _safe_fit_nb_glm(
         return result3
 
     except Exception as e:
-        # Final fallback: simplified model (intercept + condition only)
+        # Final fallback: simplified model
+        # Mark explicitly so the user knows covariates were dropped
         try:
             import statsmodels.api as sm
 
@@ -375,6 +396,10 @@ def _safe_fit_nb_glm(
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                return model.fit(maxiter=100, disp=0)
+                result = model.fit(maxiter=100, disp=0)
+            # Attach fallback metadata
+            result._modes_fallback = True
+            result._modes_dropped_covariates = True
+            return result
         except Exception:
             return None

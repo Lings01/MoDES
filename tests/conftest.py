@@ -45,8 +45,13 @@ def _build_synthetic_data(
     n_total = n_control + n_treatment
 
     condition = np.array(["control"] * n_control + ["treatment"] * n_treatment)
-    donor = np.array([f"donor_{i}" for i in range(n_total)])
-    batch = np.array(["batch_A"] * (n_total // 2) + ["batch_B"] * (n_total - n_total // 2))
+    # Ensure donors appear in both conditions to avoid confounding
+    n_unique_donors = max(2, n_total // 4)
+    donor = np.array([f"donor_{i % n_unique_donors}" for i in range(n_total)])
+    # Batch: groups of 2 to avoid confounding with donor
+    batch = np.array([
+        "batch_A" if (i // 2) % 2 == 0 else "batch_B" for i in range(n_total)
+    ])
 
     base_expression = rng.lognormal(mean=3.0, sigma=0.5, size=n_genes)
     base_accessibility = rng.lognormal(mean=2.0, sigma=0.5, size=n_peaks)

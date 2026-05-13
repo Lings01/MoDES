@@ -117,3 +117,55 @@ class TestMoDEDataConstructors:
         )
         # Should align to intersection: s2, s3, s4
         assert data.n_samples == 3
+
+
+def test_from_pseudobulk_minimal_anndata():
+    """Test from_pseudobulk with a minimal AnnData object."""
+    import anndata
+    import numpy as np
+    import pandas as pd
+
+    n_cells = 30
+    rng = np.random.default_rng(42)
+
+    adata = anndata.AnnData(
+        X=rng.poisson(10, (n_cells, 5)).astype(float),
+        obs=pd.DataFrame({
+            "donor": [f"donor_{i % 3}" for i in range(n_cells)],
+            "condition": ["ctrl"] * 15 + ["trt"] * 15,
+            "cell_type": ["T_cell"] * 10 + ["B_cell"] * 10 + ["NK"] * 10,
+        }),
+        var=pd.DataFrame(index=["G1", "G2", "G3", "G4", "G5"]),
+    )
+    adata.obs_names = [f"cell_{i}" for i in range(n_cells)]
+
+    # Add ATAC in obsm
+    adata.obsm["atac"] = rng.poisson(5, (n_cells, 4)).astype(float)
+    adata.uns["atac_var_names"] = ["peak_1", "peak_2", "peak_3", "peak_4"]
+
+    from modes.data import MoDEData
+    data = MoDEData.from_pseudobulk(
+        adata,
+        groupby=["donor", "condition", "cell_type"],
+        condition_col="condition",
+        donor_col="donor",
+        min_cells_per_group=2,
+    )
+    assert data.n_samples > 0
+    assert "context" in data.obs.columns
+
+
+def test_zero_library_size_rejected(synthetic_bulk_data):
+    data, _, _ = synthetic_bulk_data
+    data.rna.iloc[0, :] = 0
+    import pytest
+    with pytest.raises(ValueError, match="zero RNA library size"):
+        data.get_library_sizes()
+
+
+def test_cpm_normalization_rejects_zero_library(synthetic_bulk_data):
+    data, _, _ = synthetic_bulk_data
+    data.rna.iloc[0, :] = 0
+    import pytest
+    with pytest.raises(ValueError):
+        data.normalize_library_size(method="cpm")

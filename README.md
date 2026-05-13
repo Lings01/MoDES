@@ -4,18 +4,22 @@
 
 ## 概述
 
-MoDES 是一个以 **regulatory event** 为基本分析单位的统计框架。与传统的多组学整合方法不同，MoDES 将跨组学层之间的一致与不一致作为主要信号，系统地将每个调控事件分类为可解释的状态：
+MoDES 是一个以 **regulatory event** 为基本分析单位的统计框架。与传统的多组学整合方法不同，MoDES 将跨组学层之间的一致与不一致作为主要信号，系统地将每个调控事件分类为可解释的状态。
 
-- **concordant** — 完整调控链条激活（ATAC↑ RNA↑ Protein↑）
-- **chromatin_primed** — 染色质已就绪，转录未启动（ATAC↑ RNA→）
-- **rna_only** — RNA 变化不由局部染色质解释（trans/stability 调控）
-- **protein_buffered** — 转录变化未传递到蛋白层
-- **protein_memory** — 蛋白保留了过去激活状态
-- **epigenetic_memory** — 表观层保留历史状态
-- **spatial_niche_driven** — 空间微环境驱动
-- **artifact_like** — 可能是技术伪影
+MoDES 输出两层信息：
+1. **biological state**: concordant, chromatin_primed, rna_only, discordant_opposite, null
+2. **artifact_risk**: low, medium, high
 
-当前版本 (v0.1.0) 为 **MoDES-RA**（RNA + ATAC），支持 4 种状态：concordant, chromatin_primed, rna_only, artifact_like。
+当前版本 (v0.1.0) 为 **MoDES-RA**（RNA + ATAC）。
+
+## Current scope of v0.1.0
+
+- RNA + ATAC only
+- binary condition only (two-group comparison)
+- bulk or externally generated pseudobulk recommended
+- event candidates require genome_annotation, tss_map, or external_links
+- no native protein model yet
+- no native spatial graph model yet
 
 ## 安装
 
@@ -25,10 +29,12 @@ pip install -e .
 
 ## 快速开始
 
+### 方案 A：使用 external peak-gene links（推荐）
+
 ```python
+import pandas as pd
 from modes import MoDES, MoDEData
 
-# 加载数据
 data = MoDEData.from_matrices(
     rna_counts="rna_counts.tsv",
     atac_counts="atac_peaks.tsv",
@@ -36,14 +42,30 @@ data = MoDEData.from_matrices(
     condition_col="condition",
 )
 
-# 运行 MoDES 流程
-modes = MoDES(data=data, condition_col="condition")
+links = pd.read_csv("peak_gene_links.tsv", sep="\t")
+modes = MoDES(
+    data=data,
+    condition_col="condition",
+    external_links=links,
+)
 result = modes.run()
+```
 
-# 查看结果
+### 方案 B：使用 GTF genome annotation
+
+```python
+modes = MoDES(
+    data=data,
+    condition_col="condition",
+    genome_annotation="genes.gtf",
+)
+result = modes.run()
+```
+
+### 查看和导出结果
+
+```python
 print(result.summary())
-
-# 导出结果
 result.to_tsv("output/")
 result.to_graphml("output/event_network.graphml")
 result.to_report("output/report.html")
@@ -53,15 +75,15 @@ result.to_report("output/report.html")
 
 1. **Event Candidate Construction** — 将 peaks 链接到 target genes
 2. **Effect Size Estimation** — NB GLM + 经验贝叶斯收缩估计每个模态的 condition effect
-3. **Conditional Decomposition** — 控制 ATAC 后检测 RNA 的剩余效应
+3. **Conditional Decomposition** — RNA condition effect after adjustment for the linked ATAC peak
 4. **Evidence Vector Construction** — 构造 D_e = [z_ATAC, z_RNA, z_RNA|ATAC, q]
-5. **State Classification** — 规则判别 + 经验贝叶斯概率分类
+5. **State Classification** — 规则判别 + 经验贝叶斯置信度计算
 
 ## 输入格式
 
-- Bulk: TSV/CSV count matrices + metadata
-- Single-cell: AnnData (.h5ad)，通过 pseudobulk 聚合
-- Spatial: 空间坐标 + 图结构
+- **Bulk**: TSV/CSV count matrices + metadata（推荐）
+- **Single-cell**: experimental in v0.1.0. 推荐先外部聚合为 pseudobulk，再用 `MoDEData.from_matrices()` 加载。`MoDEData.from_pseudobulk()` 支持简单 AnnData（RNA in X, ATAC in obsm["atac"]）
+- **Spatial**: planned. Current v0.1.0 does not yet model spatial coordinates or neighborhood graphs.
 
 ## 引用
 

@@ -82,7 +82,7 @@ class TestStateClassifier:
         states = classifier.classify(evidence_df)
         assert len(states) == len(evidence_df)
         assert "state" in states.columns
-        assert "posterior_prob" in states.columns
+        assert "state_confidence" in states.columns
         # At least some non-null states
         unique_states = set(states["state"])
         assert len(unique_states) >= 1
@@ -95,20 +95,20 @@ class TestStateClassifier:
         states = classifier.classify(evidence_df)
         assert len(states) == len(evidence_df)
 
-    def test_posterior_probabilities_in_range(self, evidence_df):
+    def test_state_confidenceabilities_in_range(self, evidence_df):
         classifier = StateClassifier(
             fdr_threshold=0.1,
             use_empirical_bayes=True,
         )
         states = classifier.classify(evidence_df)
-        assert (states["posterior_prob"] >= 0).all()
-        assert (states["posterior_prob"] <= 1).all()
+        assert (states["state_confidence"] >= 0).all()
+        assert (states["state_confidence"] <= 1).all()
 
     def test_state_labels_valid(self, evidence_df):
         classifier = StateClassifier(use_empirical_bayes=False)
         states = classifier.classify(evidence_df)
         for s in states["state"]:
-            assert s in StateClassifier.VALID_STATES
+            assert s in StateClassifier.BIOLOGICAL_STATES or s == "artifact_like"
 
     def test_summarize_states(self, evidence_df):
         classifier = StateClassifier(use_empirical_bayes=False)
@@ -117,3 +117,52 @@ class TestStateClassifier:
         assert "count" in summary.columns
         assert "fraction" in summary.columns
         assert abs(summary["fraction"].sum() - 1.0) < 0.01
+
+
+def test_low_quality_significant_event_gets_artifact_risk():
+    """Low-quality single-modality signal should get high artifact_risk."""
+    evidence = pd.DataFrame({
+        "event_id": ["e1"],
+        "z_atac": [5.0],
+        "z_rna": [0.1],
+        "z_rna_given_atac": [0.1],
+        "atac_fdr": [1e-6],
+        "rna_fdr": [1.0],
+        "atac_direction": [1],
+        "rna_direction": [0],
+        "quality_score": [0.05],
+    })
+
+    classifier = StateClassifier(
+        fdr_threshold=0.1,
+        quality_threshold=0.3,
+        use_empirical_bayes=False,
+    )
+    states = classifier.classify(evidence)
+    # Low quality single-modality signal should be artifact_like, not chromatin_primed
+    assert states.loc[0, "state"] == "artifact_like"
+    assert states.loc[0, "artifact_risk"] == "high"
+
+
+def test_artifact_risk_low_medium_high():
+    """artifact_risk should be low/medium/high based on quality_score."""
+    evidence = pd.DataFrame({
+        "event_id": [f"e{i}" for i in range(3)],
+        "z_atac": [0.1, 0.1, 0.1],
+        "z_rna": [0.1, 0.1, 0.1],
+        "z_rna_given_atac": [0.1, 0.1, 0.1],
+        "atac_fdr": [1.0, 1.0, 1.0],
+        "rna_fdr": [1.0, 1.0, 1.0],
+        "atac_direction": [0, 0, 0],
+        "rna_direction": [0, 0, 0],
+        "quality_score": [0.9, 0.5, 0.1],
+    })
+
+    classifier = StateClassifier(
+        quality_threshold=0.3,
+        use_empirical_bayes=False,
+    )
+    states = classifier.classify(evidence)
+    assert states.loc[0, "artifact_risk"] == "low"
+    assert states.loc[1, "artifact_risk"] == "medium"
+    assert states.loc[2, "artifact_risk"] == "high"

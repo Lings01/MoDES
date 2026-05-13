@@ -31,7 +31,7 @@ class TestMoDES:
         result = modes.run()
 
         expected_cols = [
-            "event_id", "gene", "peak_id", "state", "posterior",
+            "event_id", "gene", "peak_id", "state", "confidence",
             "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
         ]
         for col in expected_cols:
@@ -121,8 +121,8 @@ class TestMoDESResult:
         filtered = result.filter(state="concordant")
         assert all(s == "concordant" for s in filtered["state"])
 
-    def test_filter_by_posterior(self, result):
-        filtered = result.filter(min_posterior=0.5)
+    def test_filter_by_confidence(self, result):
+        filtered = result.filter(min_confidence=0.5)
         assert len(filtered) <= len(result.event_table)
 
     def test_filter_by_fdr(self, result):
@@ -137,7 +137,7 @@ class TestMoDESResult:
         result.to_tsv(output_dir)
 
         assert os.path.exists(os.path.join(output_dir, "event_table.tsv"))
-        assert os.path.exists(os.path.join(output_dir, "event_state_probability.tsv"))
+        assert os.path.exists(os.path.join(output_dir, "event_state_confidence.tsv"))
         assert os.path.exists(os.path.join(output_dir, "event_layer_effects.tsv"))
 
         # Verify files are readable
@@ -159,3 +159,54 @@ class TestMoDESResult:
             content = f.read()
         assert "<html" in content
         assert "MoDES" in content
+
+
+def test_no_annotation_raises_clear_error(synthetic_bulk_data_small):
+    """Plain gene symbols without annotation should raise clear error."""
+    data, _, tss_map = synthetic_bulk_data_small
+
+    # Replace gene names with plain symbols (no coordinates)
+    data.rna.columns = ["STAT1", "GZMB", "IL7R"] + list(data.rna.columns[3:])
+
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+
+    # tss_map only has entries for original gene names, not STAT1/GZMB/IL7R
+    # Since some genes still match and some don't, we need to check that
+    # external_links or a proper tss_map covering ALL genes is needed.
+    # For this test, remove tss_map to trigger the error
+    modes2 = MoDES(data=data, condition_col="condition")
+    with pytest.raises(ValueError, match="No candidate events"):
+        modes2.build_events()
+
+
+def test_external_links_dataframe_not_boolean_evaluated(synthetic_bulk_data_small):
+    """DataFrame external_links should not trigger boolean ambiguity."""
+    data, _, tss_map = synthetic_bulk_data_small
+    links = pd.DataFrame({
+        "peak_id": [data.peak_names[0]],
+        "gene": [data.gene_names[0]],
+    })
+    modes = MoDES(
+        data=data,
+        tss_map=tss_map,
+        condition_col="condition",
+        external_links=links,
+    )
+    events = modes.build_events()
+    assert len(events) > 0
+
+
+def test_report_escapes_html(synthetic_bulk_data_small, tmp_path):
+    """HTML report should escape script tags in gene names."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    result.event_table.loc[0, "gene"] = "<script>alert(1)</script>"
+    path = str(tmp_path / "report.html")
+    result.to_report(path)
+
+    with open(path) as f:
+        html_text = f.read()
+    assert "<script>" not in html_text
+    assert "&lt;script&gt;" in html_text

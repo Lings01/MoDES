@@ -4,11 +4,23 @@ from __future__ import annotations
 
 import io
 import base64
+import html
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from modes.core import MoDESResult
+
+
+def _esc(x):
+    """HTML-escape a value."""
+    return html.escape(str(x))
+
+
+ALLOWED_STATES = {
+    "concordant", "chromatin_primed", "rna_only",
+    "artifact_like", "discordant_opposite", "null",
+}
 
 
 TEMPLATE = """<!DOCTYPE html>
@@ -130,14 +142,14 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
         ("Genes", str(results.params.get("n_genes", "N/A"))),
     ]
     for value, label in cards_data:
-        summary_cards += f'<div class="summary-card"><div class="value">{value}</div><div class="label">{label}</div></div>\n'
+        summary_cards += f'<div class="summary-card"><div class="value">{_esc(value)}</div><div class="label">{_esc(label)}</div></div>\n'
 
     # State distribution table
     state_rows = ""
     for state, count in state_counts.items():
-        cls = state if state in ("concordant", "chromatin_primed", "rna_only", "artifact_like", "null") else "null"
+        cls = state if state in ALLOWED_STATES else "null"
         state_rows += (
-            f'<tr><td><span class="state-bar {cls}">{state}</span></td>'
+            f'<tr><td><span class="state-bar {cls}">{_esc(state)}</span></td>'
             f'<td>{count}</td>'
             f'<td>{count / len(results.event_table) * 100:.1f}%</td></tr>\n'
         )
@@ -149,9 +161,9 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
     </table>"""
 
     # Event table (top 50 by posterior)
-    top_events = results.event_table.nlargest(50, "posterior")
+    top_events = results.event_table.nlargest(50, "confidence")
     display_cols = [
-        "event_id", "gene", "peak_id", "state", "posterior",
+        "event_id", "gene", "peak_id", "state", "confidence",
         "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
     ]
     avail_cols = [c for c in display_cols if c in top_events.columns]
@@ -159,18 +171,16 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
     event_rows = ""
     for _, row in top_events[avail_cols].iterrows():
         state = row.get("state", "null")
-        cls = state if state in (
-            "concordant", "chromatin_primed", "rna_only", "artifact_like", "null"
-        ) else "null"
+        cls = state if state in ALLOWED_STATES else "null"
         event_rows += "<tr>"
         for col in avail_cols:
             val = row[col]
             if col == "state":
-                event_rows += f'<td><span class="state-bar {cls}">{val}</span></td>'
+                event_rows += f'<td><span class="state-bar {cls}">{_esc(val)}</span></td>'
             elif isinstance(val, float):
                 event_rows += f"<td>{val:.3f}</td>"
             else:
-                event_rows += f"<td>{val}</td>"
+                event_rows += f"<td>{_esc(val)}</td>"
         event_rows += "</tr>\n"
 
     event_table_html = f"""
@@ -182,7 +192,7 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
     # Params
     params_rows = ""
     for k, v in results.params.items():
-        params_rows += f"<tr><td>{k}</td><td>{v}</td></tr>\n"
+        params_rows += f"<tr><td>{_esc(k)}</td><td>{_esc(v)}</td></tr>\n"
 
     # Render
     html = TEMPLATE.format(

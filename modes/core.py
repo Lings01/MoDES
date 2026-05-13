@@ -24,7 +24,7 @@ def _event_result_columns():
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
-        "state", "posterior", "quality_score",
+        "state", "confidence", "quality_score",
     ]
 
 
@@ -123,14 +123,22 @@ class MoDES:
             distal_window=250000,
         )
 
+        ext_links = self.external_links if external_links is None else external_links
+        motifs = self.motif_annotation if motif_annotation is None else motif_annotation
         self.events = builder.build(
             gene_names=list(self.data.gene_names),
             peak_names=list(self.data.peak_names),
-            external_links=external_links or self.external_links,
-            motif_annotation=motif_annotation or self.motif_annotation,
+            external_links=ext_links,
+            motif_annotation=motifs,
             genome_annotation=self.genome_annotation,
             tss_map=self.tss_map,
         )
+        if self.events is None or len(self.events) == 0:
+            raise ValueError(
+                "No candidate events were generated. "
+                "For normal gene symbols, provide one of: "
+                "genome_annotation, tss_map, or external_links."
+            )
         return self.events
 
     def estimate_effects(self) -> Tuple[Dict, Dict]:
@@ -213,7 +221,7 @@ class MoDES:
 
         Returns
         -------
-        DataFrame with state assignments and posteriors.
+        DataFrame with state assignments and confidence scores.
         """
         if self.evidence is None:
             raise RuntimeError("Call build_evidence() first")
@@ -275,10 +283,10 @@ class MoDES:
             state_row = self.states[self.states["event_id"] == eid]
             if len(state_row) == 0:
                 state = "null"
-                posterior = 1.0
+                confidence = 1.0
             else:
                 state = state_row.iloc[0]["state"]
-                posterior = state_row.iloc[0]["posterior_prob"]
+                confidence = state_row.iloc[0]["state_confidence"]
 
             # Quality
             ev_row = self.evidence[self.evidence["event_id"] == eid]
@@ -306,7 +314,7 @@ class MoDES:
                     rna_after_atac_pval=rna_after_pval,
                     rna_after_atac_fdr=rna_after_fdr,
                     state=state,
-                    posterior=posterior,
+                    confidence=confidence,
                     quality_score=quality,
                 )
             )
@@ -367,7 +375,7 @@ class MoDESResult:
     event_table : DataFrame
         Main output with per-event effect sizes and state classifications.
     state_probabilities : DataFrame
-        Full posterior probability per event.
+        State confidence probability per event.
     layer_effects : DataFrame
         Per-layer effect size estimates.
     evidence_vectors : DataFrame
@@ -417,7 +425,7 @@ class MoDESResult:
     def filter(
         self,
         state: Optional[str] = None,
-        min_posterior: float = 0.0,
+        min_confidence: float = 0.0,
         fdr_threshold: Optional[float] = None,
         min_atac_fdr: Optional[float] = None,
         min_rna_fdr: Optional[float] = None,
@@ -429,8 +437,8 @@ class MoDESResult:
         ----------
         state : str, optional
             Keep only events with this state.
-        min_posterior : float
-            Minimum posterior probability.
+        min_confidence : float
+            Minimum confidence probability.
         fdr_threshold : float, optional
             Keep events where atac_fdr < threshold OR rna_fdr < threshold.
         min_atac_fdr, min_rna_fdr : float, optional
@@ -445,8 +453,8 @@ class MoDESResult:
         if state is not None:
             df = df[df["state"] == state]
 
-        if min_posterior > 0:
-            df = df[df["posterior"] >= min_posterior]
+        if min_confidence > 0:
+            df = df[df["confidence"] >= min_confidence]
 
         if fdr_threshold is not None:
             df = df[
@@ -473,7 +481,7 @@ class MoDESResult:
 
         if self.state_probabilities is not None:
             self.state_probabilities.to_csv(
-                os.path.join(output_dir, "event_state_probability.tsv"),
+                os.path.join(output_dir, "event_state_confidence.tsv"),
                 sep="\t", index=False,
             )
 
@@ -522,7 +530,7 @@ class MoDESResult:
                 gene_node, peak_node,
                 type="event",
                 state=row["state"],
-                posterior=row["posterior"],
+                confidence=row["confidence"],
                 atac_coef=row["atac_coef"],
                 rna_coef=row["rna_coef"],
             )

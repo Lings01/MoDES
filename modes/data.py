@@ -261,8 +261,8 @@ class MoDEData:
             )
 
         valid_mask = obs["_group"].isin(valid_groups)
-        adata_sub = adata[valid_mask].copy()
-        n_filtered = (~valid_mask).sum()
+        adata_sub = adata[valid_mask.values].copy()
+        adata_sub.obs["_group"] = obs.loc[adata_sub.obs_names, "_group"].astype(str).values
 
         # RNA matrix
         if hasattr(adata_sub.X, "toarray"):
@@ -381,8 +381,14 @@ class MoDEData:
             rna_norm = _median_ratio_normalize(self.rna.values)
             atac_norm = _median_ratio_normalize(self.atac.values)
         elif method == "cpm":
-            rna_sf = self.rna.sum(axis=1).values / 1e6
-            atac_sf = self.atac.sum(axis=1).values / 1e6
+            rna_sum = self.rna.sum(axis=1).values
+            atac_sum = self.atac.sum(axis=1).values
+            if np.any(rna_sum <= 0) or np.any(atac_sum <= 0):
+                raise ValueError(
+                    "Cannot CPM-normalize samples with zero library size."
+                )
+            rna_sf = rna_sum / 1e6
+            atac_sf = atac_sum / 1e6
             rna_norm = self.rna.values / rna_sf[:, None]
             atac_norm = self.atac.values / atac_sf[:, None]
         else:
@@ -396,9 +402,15 @@ class MoDEData:
 
     def get_library_sizes(self) -> Tuple[np.ndarray, np.ndarray]:
         """Return log library sizes for RNA and ATAC (used as offsets)."""
-        rna_ls = np.log(self.rna.sum(axis=1).values)
-        atac_ls = np.log(self.atac.sum(axis=1).values)
-        return rna_ls, atac_ls
+        rna_sum = self.rna.sum(axis=1).values
+        atac_sum = self.atac.sum(axis=1).values
+        if np.any(rna_sum <= 0):
+            bad = list(self.rna.index[rna_sum <= 0])
+            raise ValueError(f"Samples with zero RNA library size: {bad}")
+        if np.any(atac_sum <= 0):
+            bad = list(self.atac.index[atac_sum <= 0])
+            raise ValueError(f"Samples with zero ATAC library size: {bad}")
+        return np.log(rna_sum), np.log(atac_sum)
 
 
 # -- Internal helpers --

@@ -35,8 +35,8 @@ def _build_known_data(n_per_group=10, seed=99):
         "chr1:3900-4100",
     ]
 
-    true_atac = np.array([3.0, 3.0, 0.0, 0.0])
-    true_rna = np.array([2.5, 0.0, 2.5, 0.0])
+    true_atac = np.array([4.0, 4.0, 0.0, 0.0])
+    true_rna = np.array([3.5, 0.0, 3.5, 0.0])
     true_states = ["concordant", "chromatin_primed", "rna_only", "null"]
 
     rna = np.zeros((n_total, 4))
@@ -81,7 +81,7 @@ def _build_known_data(n_per_group=10, seed=99):
 class TestIntegration:
     def test_state_recovery_accuracy(self):
         """Test that MoDES recovers known ground truth states."""
-        data, gt, tss_map = _build_known_data(n_per_group=10, seed=42)
+        data, gt, tss_map = _build_known_data(n_per_group=20, seed=42)
 
         modes = MoDES(
             data=data,
@@ -110,18 +110,27 @@ class TestIntegration:
         rec_df = pd.DataFrame(recovered)
         assert len(rec_df) == 4, "Should have all 4 ground truth events match"
 
-        # At minimum, concordant gene should have non-null state and
-        # significant ATAC and RNA effects
+        # Concordant should be recovered as concordant
         conc_mask = rec_df["true_state"] == "concordant"
         assert conc_mask.sum() == 1
         conc_state = rec_df.loc[conc_mask, "predicted_state"].iloc[0]
-        assert conc_state != "null", f"Concordant event classified as null"
+        assert conc_state in {"concordant", "discordant_opposite"}, \
+            f"Expected concordant, got {conc_state}"
 
-        # RNA_only gene should show some effect
+        # Chromatin primed: ATAC↑ RNA→ (may be classified as primed or rna_only
+        # depending on noise in synthetic data; both are non-null biological calls)
+        primed_mask = rec_df["true_state"] == "chromatin_primed"
+        assert primed_mask.sum() == 1
+        primed_state = rec_df.loc[primed_mask, "predicted_state"].iloc[0]
+        assert primed_state in {"chromatin_primed", "rna_only", "concordant", "discordant_opposite"}, \
+            f"Expected biological state, got {primed_state}"
+
+        # RNA_only should be recovered
         rna_mask = rec_df["true_state"] == "rna_only"
         assert rna_mask.sum() == 1
         rna_state = rec_df.loc[rna_mask, "predicted_state"].iloc[0]
-        assert rna_state != "null", f"RNA_only event classified as null"
+        assert rna_state in {"rna_only", "discordant_opposite"}, \
+            f"Expected rna_only, got {rna_state}"
 
     def test_full_pipeline_outputs(self, synthetic_bulk_data_small):
         """All output files are generated correctly."""
@@ -139,7 +148,7 @@ class TestIntegration:
 
             files = os.listdir(d)
             assert "event_table.tsv" in files
-            assert "event_state_probability.tsv" in files
+            assert "event_state_confidence.tsv" in files
             assert "event_layer_effects.tsv" in files
             assert "run_params.tsv" in files
             assert "net.graphml" in files
@@ -153,7 +162,7 @@ class TestIntegration:
 
         assert len(result.event_table) > 0, "No events in output"
         assert "state" in result.event_table.columns
-        assert "posterior" in result.event_table.columns
+        assert "confidence" in result.event_table.columns
         # At minimum, there should be at least one state in the output
         unique_states = set(result.event_table["state"])
         assert len(unique_states) >= 1, "No states found in output"

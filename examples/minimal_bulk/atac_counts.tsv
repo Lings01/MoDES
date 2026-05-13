@@ -1,0 +1,11 @@
+sample	chr1:100-200	chr2:300-400
+ctrl_1	50	60
+ctrl_2	45	55
+ctrl_3	55	50
+ctrl_4	48	58
+ctrl_5	52	62
+trt_1	350	55
+trt_2	380	50
+trt_3	340	60
+trt_4	360	58
+trt_5	355	52
