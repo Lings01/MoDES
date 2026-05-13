@@ -1,0 +1,541 @@
+"""MoDES orchestrator and result container."""
+
+from __future__ import annotations
+
+import os
+import warnings
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+from modes._types import EventResult
+from modes.data import MoDEData
+from modes.events import EventCandidateBuilder
+from modes.effects import EffectEstimator
+from modes.decompose import ConditionalDecomposition
+from modes.states import EvidenceBuilder, StateClassifier
+
+
+def _event_result_columns():
+    return [
+        "event_id", "tf_name", "peak_id", "gene", "context",
+        "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
+        "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
+        "rna_after_atac_coef", "rna_after_atac_se",
+        "rna_after_atac_pval", "rna_after_atac_fdr",
+        "state", "posterior", "quality_score",
+    ]
+
+
+class MoDES:
+    """
+    Multi-Omics Discordance/Event State inference.
+
+    Main orchestrator for the MoDES-RA pipeline (RNA + ATAC).
+
+    Parameters
+    ----------
+    data : MoDEData
+        Input data with RNA and ATAC matrices.
+    condition_col : str
+        Column in data.obs specifying the condition of interest.
+    covariate_cols : list of str, optional
+        Additional covariates.
+    donor_col : str, optional
+        Donor/replicate column.
+    batch_col : str, optional
+        Batch column.
+    fdr_threshold : float
+        FDR cutoff for significance. Default 0.1.
+    genome_annotation : str, optional
+        Path to GTF for TSS annotation.
+    external_links : pd.DataFrame, optional
+        Pre-computed peak-to-gene links.
+    motif_annotation : pd.DataFrame, optional
+        Peak-to-TF motif mapping.
+    """
+
+    def __init__(
+        self,
+        data: MoDEData,
+        condition_col: str,
+        covariate_cols: Optional[List[str]] = None,
+        donor_col: Optional[str] = None,
+        batch_col: Optional[str] = None,
+        fdr_threshold: float = 0.1,
+        genome_annotation: Optional[str] = None,
+        external_links: Optional[pd.DataFrame] = None,
+        motif_annotation: Optional[pd.DataFrame] = None,
+        tss_map: Optional[Dict] = None,
+    ):
+        self.data = data
+        self.condition_col = condition_col
+        self.covariate_cols = covariate_cols or []
+        self.donor_col = donor_col
+        self.batch_col = batch_col
+        self.fdr_threshold = fdr_threshold
+        self.genome_annotation = genome_annotation
+        self.external_links = external_links
+        self.motif_annotation = motif_annotation
+        self.tss_map = tss_map
+
+        # Pipeline state
+        self.events: Optional[pd.DataFrame] = None
+        self.atac_effects: Optional[Dict] = None
+        self.rna_effects: Optional[Dict] = None
+        self.conditional_effects: Optional[pd.DataFrame] = None
+        self.evidence: Optional[pd.DataFrame] = None
+        self.states: Optional[pd.DataFrame] = None
+        self.results: Optional[MoDESResult] = None
+
+    def run(self) -> "MoDESResult":
+        """Execute the full MoDES pipeline."""
+        self.build_events()
+        self.estimate_effects()
+        self.decompose()
+        self.build_evidence()
+        self.classify_states()
+        self.results = self._assemble_results()
+        return self.results
+
+    def build_events(
+        self,
+        external_links: Optional[pd.DataFrame] = None,
+        motif_annotation: Optional[pd.DataFrame] = None,
+    ) -> pd.DataFrame:
+        """
+        Step 1: Build candidate regulatory events.
+
+        Parameters
+        ----------
+        external_links : DataFrame, optional
+            Override instance's external_links.
+        motif_annotation : DataFrame, optional
+            Override instance's motif_annotation.
+
+        Returns
+        -------
+        DataFrame of EventCandidate records.
+        """
+        builder = EventCandidateBuilder(
+            promoter_window=2000,
+            distal_window=250000,
+        )
+
+        self.events = builder.build(
+            gene_names=list(self.data.gene_names),
+            peak_names=list(self.data.peak_names),
+            external_links=external_links or self.external_links,
+            motif_annotation=motif_annotation or self.motif_annotation,
+            genome_annotation=self.genome_annotation,
+            tss_map=self.tss_map,
+        )
+        return self.events
+
+    def estimate_effects(self) -> Tuple[Dict, Dict]:
+        """
+        Step 2: Estimate ATAC and RNA condition effects.
+
+        Returns
+        -------
+        (atac_effects, rna_effects)
+        """
+        if self.events is None:
+            raise RuntimeError("Call build_events() first")
+
+        estimator = EffectEstimator(
+            condition_col=self.condition_col,
+            covariate_cols=self.covariate_cols,
+            donor_col=self.donor_col,
+            batch_col=self.batch_col,
+            use_empirical_bayes=True,
+        )
+
+        peak_names = list(self.events["peak_id"].unique())
+        gene_names = list(self.events["gene"].unique())
+
+        self.atac_effects, self.rna_effects = estimator.estimate_effects(
+            self.data, peak_names, gene_names
+        )
+        return self.atac_effects, self.rna_effects
+
+    def decompose(self) -> pd.DataFrame:
+        """
+        Step 3: Conditional decomposition (RNA after ATAC).
+
+        Returns
+        -------
+        DataFrame of conditional effects.
+        """
+        if self.atac_effects is None or self.rna_effects is None:
+            raise RuntimeError("Call estimate_effects() first")
+
+        decomposer = ConditionalDecomposition(
+            condition_col=self.condition_col,
+            covariate_cols=self.covariate_cols,
+            donor_col=self.donor_col,
+            batch_col=self.batch_col,
+        )
+
+        self.conditional_effects = decomposer.decompose(
+            data=self.data,
+            events=self.events,
+            atac_effects=self.atac_effects,
+            rna_effects=self.rna_effects,
+        )
+        return self.conditional_effects
+
+    def build_evidence(self) -> pd.DataFrame:
+        """
+        Step 4: Build evidence vectors.
+
+        Returns
+        -------
+        DataFrame of evidence vectors.
+        """
+        if self.conditional_effects is None:
+            raise RuntimeError("Call decompose() first")
+
+        builder = EvidenceBuilder()
+        self.evidence = builder.build(
+            events=self.events,
+            atac_effects=self.atac_effects,
+            rna_effects=self.rna_effects,
+            conditional_effects=self.conditional_effects,
+            data=self.data,
+        )
+        return self.evidence
+
+    def classify_states(self) -> pd.DataFrame:
+        """
+        Step 5: Classify events into regulatory states.
+
+        Returns
+        -------
+        DataFrame with state assignments and posteriors.
+        """
+        if self.evidence is None:
+            raise RuntimeError("Call build_evidence() first")
+
+        classifier = StateClassifier(
+            fdr_threshold=self.fdr_threshold,
+            use_empirical_bayes=True,
+        )
+
+        self.states = classifier.classify(self.evidence)
+        return self.states
+
+    def _assemble_results(self) -> "MoDESResult":
+        """Combine all pipeline outputs into MoDESResult."""
+        if self.events is None or len(self.events) == 0:
+            params = {
+                "condition_col": self.condition_col,
+                "covariate_cols": self.covariate_cols,
+                "donor_col": self.donor_col,
+                "batch_col": self.batch_col,
+                "fdr_threshold": self.fdr_threshold,
+                "n_events": 0,
+                "n_samples": self.data.n_samples,
+                "n_genes": self.data.n_genes,
+                "n_peaks": self.data.n_peaks,
+            }
+            return MoDESResult(
+                event_table=pd.DataFrame(columns=_event_result_columns()),
+                params=params,
+            )
+
+        records = []
+
+        for _, event in self.events.iterrows():
+            eid = event["event_id"]
+            peak = event["peak_id"]
+            gene = event["gene"]
+
+            atac = self.atac_effects.get(peak)
+            rna = self.rna_effects.get(gene)
+
+            # Find conditional effect
+            cond_row = self.conditional_effects[
+                self.conditional_effects["event_id"] == eid
+            ]
+            if len(cond_row) == 0:
+                rna_after_coef = np.nan
+                rna_after_se = np.nan
+                rna_after_pval = 1.0
+                rna_after_fdr = 1.0
+            else:
+                cr = cond_row.iloc[0]
+                rna_after_coef = cr.get("rna_after_atac_coef", np.nan)
+                rna_after_se = cr.get("rna_after_atac_se", np.nan)
+                rna_after_pval = cr.get("rna_after_atac_pval", 1.0)
+                rna_after_fdr = cr.get("rna_after_atac_fdr", 1.0)
+
+            # Find state
+            state_row = self.states[self.states["event_id"] == eid]
+            if len(state_row) == 0:
+                state = "null"
+                posterior = 1.0
+            else:
+                state = state_row.iloc[0]["state"]
+                posterior = state_row.iloc[0]["posterior_prob"]
+
+            # Quality
+            ev_row = self.evidence[self.evidence["event_id"] == eid]
+            quality = ev_row.iloc[0]["quality_score"] if len(ev_row) > 0 else 0.5
+
+            records.append(
+                EventResult(
+                    event_id=eid,
+                    tf_name=event.get("tf_name"),
+                    peak_id=peak,
+                    gene=gene,
+                    context=event.get("context", ""),
+                    atac_coef=atac.coef if atac else np.nan,
+                    atac_se=atac.se if atac else np.nan,
+                    atac_pval=atac.p_value if atac else 1.0,
+                    atac_fdr=atac.fdr if atac else 1.0,
+                    atac_direction=atac.direction if atac else 0,
+                    rna_coef=rna.coef if rna else np.nan,
+                    rna_se=rna.se if rna else np.nan,
+                    rna_pval=rna.p_value if rna else 1.0,
+                    rna_fdr=rna.fdr if rna else 1.0,
+                    rna_direction=rna.direction if rna else 0,
+                    rna_after_atac_coef=rna_after_coef,
+                    rna_after_atac_se=rna_after_se,
+                    rna_after_atac_pval=rna_after_pval,
+                    rna_after_atac_fdr=rna_after_fdr,
+                    state=state,
+                    posterior=posterior,
+                    quality_score=quality,
+                )
+            )
+
+        params = {
+            "condition_col": self.condition_col,
+            "covariate_cols": self.covariate_cols,
+            "donor_col": self.donor_col,
+            "batch_col": self.batch_col,
+            "fdr_threshold": self.fdr_threshold,
+            "n_events": len(records),
+            "n_samples": self.data.n_samples,
+            "n_genes": self.data.n_genes,
+            "n_peaks": self.data.n_peaks,
+        }
+
+        return MoDESResult(
+            event_table=pd.DataFrame([r.__dict__ for r in records]),
+            state_probabilities=self.states.copy() if self.states is not None else None,
+            layer_effects=self._build_layer_effects_df(),
+            evidence_vectors=self.evidence.copy() if self.evidence is not None else None,
+            params=params,
+        )
+
+    def _build_layer_effects_df(self) -> pd.DataFrame:
+        """Assemble per-event layer effect estimates."""
+        records = []
+        for _, event in self.events.iterrows():
+            eid = event["event_id"]
+            peak = event["peak_id"]
+            gene = event["gene"]
+
+            atac = self.atac_effects.get(peak)
+            rna = self.rna_effects.get(gene)
+
+            records.append({
+                "event_id": eid,
+                "peak_id": peak,
+                "gene": gene,
+                "atac_coef": atac.coef if atac else np.nan,
+                "atac_se": atac.se if atac else np.nan,
+                "atac_z": atac.z_score if atac else np.nan,
+                "atac_fdr": atac.fdr if atac else 1.0,
+                "rna_coef": rna.coef if rna else np.nan,
+                "rna_se": rna.se if rna else np.nan,
+                "rna_z": rna.z_score if rna else np.nan,
+                "rna_fdr": rna.fdr if rna else 1.0,
+            })
+        return pd.DataFrame(records)
+
+
+class MoDESResult:
+    """
+    Container for MoDES output.
+
+    Parameters
+    ----------
+    event_table : DataFrame
+        Main output with per-event effect sizes and state classifications.
+    state_probabilities : DataFrame
+        Full posterior probability per event.
+    layer_effects : DataFrame
+        Per-layer effect size estimates.
+    evidence_vectors : DataFrame
+        D_e evidence vectors for all events.
+    params : dict
+        Run parameters.
+    """
+
+    def __init__(
+        self,
+        event_table: pd.DataFrame,
+        state_probabilities: Optional[pd.DataFrame] = None,
+        layer_effects: Optional[pd.DataFrame] = None,
+        evidence_vectors: Optional[pd.DataFrame] = None,
+        params: Optional[dict] = None,
+    ):
+        self.event_table = event_table
+        self.state_probabilities = state_probabilities
+        self.layer_effects = layer_effects
+        self.evidence_vectors = evidence_vectors
+        self.params = params or {}
+
+    def summary(self) -> str:
+        """Return a text summary of the results."""
+        lines = []
+        lines.append("=" * 60)
+        lines.append("MoDES Results Summary")
+        lines.append("=" * 60)
+        lines.append(f"Total events:     {len(self.event_table)}")
+        lines.append(f"Significant (FDR < 0.1): "
+                     f"{(self.event_table['atac_fdr'] < 0.1).sum()} ATAC, "
+                     f"{(self.event_table['rna_fdr'] < 0.1).sum()} RNA")
+        lines.append("")
+
+        state_counts = self.event_table["state"].value_counts()
+        lines.append("State distribution:")
+        for state, count in state_counts.items():
+            lines.append(f"  {state:20s}: {count:6d} "
+                        f"({count / len(self.event_table) * 100:5.1f}%)")
+
+        n_with_tf = self.event_table["tf_name"].notna().sum()
+        if n_with_tf > 0:
+            lines.append(f"\nEvents with TF annotation: {n_with_tf}")
+
+        return "\n".join(lines)
+
+    def filter(
+        self,
+        state: Optional[str] = None,
+        min_posterior: float = 0.0,
+        fdr_threshold: Optional[float] = None,
+        min_atac_fdr: Optional[float] = None,
+        min_rna_fdr: Optional[float] = None,
+    ) -> pd.DataFrame:
+        """
+        Filter the event table.
+
+        Parameters
+        ----------
+        state : str, optional
+            Keep only events with this state.
+        min_posterior : float
+            Minimum posterior probability.
+        fdr_threshold : float, optional
+            Keep events where atac_fdr < threshold OR rna_fdr < threshold.
+        min_atac_fdr, min_rna_fdr : float, optional
+            Per-modality FDR thresholds.
+
+        Returns
+        -------
+        Filtered DataFrame.
+        """
+        df = self.event_table.copy()
+
+        if state is not None:
+            df = df[df["state"] == state]
+
+        if min_posterior > 0:
+            df = df[df["posterior"] >= min_posterior]
+
+        if fdr_threshold is not None:
+            df = df[
+                (df["atac_fdr"] < fdr_threshold) |
+                (df["rna_fdr"] < fdr_threshold)
+            ]
+
+        if min_atac_fdr is not None:
+            df = df[df["atac_fdr"] < min_atac_fdr]
+
+        if min_rna_fdr is not None:
+            df = df[df["rna_fdr"] < min_rna_fdr]
+
+        return df.reset_index(drop=True)
+
+    def to_tsv(self, output_dir: str) -> None:
+        """Write TSV output files to output_dir."""
+        os.makedirs(output_dir, exist_ok=True)
+
+        self.event_table.to_csv(
+            os.path.join(output_dir, "event_table.tsv"),
+            sep="\t", index=False,
+        )
+
+        if self.state_probabilities is not None:
+            self.state_probabilities.to_csv(
+                os.path.join(output_dir, "event_state_probability.tsv"),
+                sep="\t", index=False,
+            )
+
+        if self.layer_effects is not None:
+            self.layer_effects.to_csv(
+                os.path.join(output_dir, "event_layer_effects.tsv"),
+                sep="\t", index=False,
+            )
+
+        if self.evidence_vectors is not None:
+            self.evidence_vectors.to_csv(
+                os.path.join(output_dir, "event_evidence_vectors.tsv"),
+                sep="\t", index=False,
+            )
+
+        # Write params as JSON-like TSV
+        pd.DataFrame(list(self.params.items()), columns=["parameter", "value"]).to_csv(
+            os.path.join(output_dir, "run_params.tsv"),
+            sep="\t", index=False,
+        )
+
+    def to_graphml(self, path: str) -> None:
+        """
+        Write event network as GraphML.
+
+        Nodes: genes, peaks, TFs.
+        Edges: peak->gene (event link), TF->peak (motif support).
+        """
+        try:
+            import networkx as nx
+        except ImportError:
+            raise ImportError("networkx is required for to_graphml()")
+
+        G = nx.Graph()
+
+        for _, row in self.event_table.iterrows():
+            gene_node = f"gene:{row['gene']}"
+            peak_node = f"peak:{row['peak_id']}"
+
+            if gene_node not in G:
+                G.add_node(gene_node, type="gene")
+            if peak_node not in G:
+                G.add_node(peak_node, type="peak")
+
+            G.add_edge(
+                gene_node, peak_node,
+                type="event",
+                state=row["state"],
+                posterior=row["posterior"],
+                atac_coef=row["atac_coef"],
+                rna_coef=row["rna_coef"],
+            )
+
+            if pd.notna(row.get("tf_name")):
+                tf_node = f"tf:{row['tf_name']}"
+                if tf_node not in G:
+                    G.add_node(tf_node, type="tf")
+                G.add_edge(tf_node, peak_node, type="motif")
+
+        nx.write_graphml(G, path)
+
+    def to_report(self, path: str) -> None:
+        """Generate HTML report."""
+        from modes.report import generate_report
+        generate_report(self, path)

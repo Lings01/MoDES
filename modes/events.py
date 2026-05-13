@@ -1,0 +1,294 @@
+"""Event candidate construction: link peaks to genes."""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+
+from modes._types import EventCandidate
+
+
+class EventCandidateBuilder:
+    """
+    Build candidate regulatory events linking peaks to target genes.
+
+    Supports promoter peaks, distal peaks, motif annotation,
+    and external pre-computed links.
+
+    Parameters
+    ----------
+    promoter_window : int
+        bp around TSS considered as promoter (default 2000).
+    distal_window : int
+        bp around TSS for distal candidate search (default 250000).
+    """
+
+    def __init__(
+        self,
+        promoter_window: int = 2000,
+        distal_window: int = 250000,
+    ):
+        self.promoter_window = promoter_window
+        self.distal_window = distal_window
+        self._tss_map: Optional[Dict[str, tuple]] = None
+
+    def build(
+        self,
+        gene_names: List[str],
+        peak_names: List[str],
+        external_links: Optional[pd.DataFrame] = None,
+        motif_annotation: Optional[pd.DataFrame] = None,
+        genome_annotation: Optional[str] = None,
+        tss_map: Optional[Dict[str, tuple]] = None,
+    ) -> pd.DataFrame:
+        """
+        Build candidate events.
+
+        Parameters
+        ----------
+        gene_names : list of str
+            Gene identifiers.
+        peak_names : list of str
+            Peak identifiers in format 'chr:start-end' or 'chr_start_end'.
+        external_links : DataFrame, optional
+            Columns: ['peak_id', 'gene', 'tf_name', 'source'].
+            Pre-computed peak-to-gene links from SCENIC+/SCARlink/ArchR.
+        motif_annotation : DataFrame, optional
+            Columns: ['peak_id', 'tf_name'].
+        genome_annotation : str, optional
+            Path to GTF/GFF for TSS annotation.
+        tss_map : dict, optional
+            Manual gene -> (name, chr, tss_position) mapping.
+
+        Returns
+        -------
+        DataFrame of EventCandidate columns.
+        """
+        rows = []
+
+        # Parse peak coordinates
+        peak_coords = [_parse_peak_name(p) for p in peak_names]
+        peak_df = pd.DataFrame(
+            peak_coords, columns=["peak_id", "chr", "start", "end"]
+        )
+
+        # Parse gene TSS from names if format gene:chr:pos is used,
+        # or from genome annotation, or from manual map
+        if tss_map is not None:
+            self._tss_map = tss_map
+        elif genome_annotation:
+            self._tss_map = _parse_gtf_tss(genome_annotation, gene_names)
+        else:
+            self._tss_map = _parse_gene_tss_from_names(gene_names)
+
+        # 1. Promoter and distal peaks per gene
+        for gene in gene_names:
+            tss_info = self._tss_map.get(gene)
+            if tss_info is None:
+                # Try to look up by the gene name portion only
+                for key, val in self._tss_map.items():
+                    if val[0] == gene or key == gene.split(":")[0].split("_")[0]:
+                        tss_info = val
+                        break
+            if tss_info is None:
+                continue
+            _, tss_chr, tss_pos = tss_info
+
+            gene_peaks = peak_df[peak_df["chr"] == tss_chr]
+            if gene_peaks.empty:
+                continue
+
+            for _, peak in gene_peaks.iterrows():
+                distance = _peak_tss_distance(
+                    peak["start"], peak["end"], tss_pos
+                )
+                abs_dist = abs(distance)
+
+                if abs_dist <= self.promoter_window:
+                    source = "promoter"
+                elif abs_dist <= self.distal_window:
+                    source = f"distal_{self.distal_window // 1000}kb"
+                else:
+                    continue
+
+                event_id = f"{gene}_{peak['peak_id']}_{source}"
+                rows.append(
+                    EventCandidate(
+                        event_id=event_id,
+                        gene=gene,
+                        peak_id=peak["peak_id"],
+                        peak_chr=peak["chr"],
+                        peak_start=peak["start"],
+                        peak_end=peak["end"],
+                        context="",
+                        link_source=source,
+                        distance_to_tss=distance,
+                    )
+                )
+
+        candidates = pd.DataFrame(
+            [r.__dict__ for r in rows], columns=_candidate_columns()
+        )
+
+        # 2. Merge external links
+        if external_links is not None:
+            candidates = self._merge_external_links(candidates, external_links)
+
+        # 3. Assign motifs
+        if motif_annotation is not None:
+            candidates = self._assign_motifs(candidates, motif_annotation)
+
+        # Deduplicate
+        if not candidates.empty:
+            candidates.drop_duplicates(subset=["event_id"], inplace=True)
+            candidates.reset_index(drop=True, inplace=True)
+
+        return candidates
+
+    def _merge_external_links(
+        self,
+        candidates: pd.DataFrame,
+        external: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Merge pre-computed peak-gene links, avoiding duplicates."""
+        ext = external.copy()
+        required = ["peak_id", "gene"]
+        for col in required:
+            if col not in ext.columns:
+                raise ValueError(f"External links missing required column '{col}'")
+
+        # Build event IDs for external links
+        ext_records = []
+        for _, row in ext.iterrows():
+            eid = f"{row['gene']}_{row['peak_id']}_external"
+            existing = candidates[candidates["event_id"] == eid]
+            if len(existing) > 0:
+                # Update existing with TF info if available
+                if "tf_name" in ext.columns and pd.notna(row.get("tf_name")):
+                    candidates.loc[existing.index, "tf_name"] = row["tf_name"]
+                continue
+
+            ext_records.append(
+                EventCandidate(
+                    event_id=eid,
+                    gene=row["gene"],
+                    peak_id=row["peak_id"],
+                    peak_chr=row.get("peak_chr", ""),
+                    peak_start=int(row.get("peak_start", 0)),
+                    peak_end=int(row.get("peak_end", 0)),
+                    tf_name=row.get("tf_name"),
+                    context=row.get("context", ""),
+                    link_source=row.get("source", "external"),
+                    distance_to_tss=int(row.get("distance_to_tss", 0)),
+                )
+            )
+
+        if ext_records:
+            ext_df = pd.DataFrame(
+                [r.__dict__ for r in ext_records], columns=_candidate_columns()
+            )
+            candidates = pd.concat([candidates, ext_df], ignore_index=True)
+
+        return candidates
+
+    def _assign_motifs(
+        self,
+        candidates: pd.DataFrame,
+        motifs: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Assign TF names to peaks with motif hits."""
+        if "peak_id" not in motifs.columns or "tf_name" not in motifs.columns:
+            raise ValueError("motif_annotation needs 'peak_id' and 'tf_name' columns")
+
+        motif_map = motifs.groupby("peak_id")["tf_name"].apply(
+            lambda x: "|".join(x.dropna().unique())
+        )
+        candidates["tf_name"] = candidates["tf_name"].fillna(
+            candidates["peak_id"].map(motif_map)
+        )
+        return candidates
+
+
+def _candidate_columns() -> List[str]:
+    return [
+        "event_id", "gene", "peak_id", "peak_chr", "peak_start",
+        "peak_end", "tf_name", "context", "link_source", "distance_to_tss",
+    ]
+
+
+def _parse_peak_name(name: str) -> tuple:
+    """Parse 'chr1:100-200' or 'chr1_100_200' format."""
+    import re
+
+    # Try chr:start-end
+    m = re.match(r"(chr\w+)[:\-_](\d+)[:\-_](\d+)", str(name))
+    if m:
+        return (str(name), m.group(1), int(m.group(2)), int(m.group(3)))
+    # Fallback
+    return (str(name), "unknown", 0, 0)
+
+
+def _parse_gene_tss_from_names(gene_names: List[str]) -> Dict[str, tuple]:
+    """
+    Try to parse gene names that include coordinate info.
+    Falls back to a dummy map if names don't contain coordinates.
+    """
+    import re
+
+    tss_map = {}
+    for g in gene_names:
+        m = re.match(r"(.+?)[:\-_](chr\w+)[:\-_](\d+)", str(g))
+        if m:
+            tss_map[m.group(1)] = (m.group(1), m.group(2), int(m.group(3)))
+        else:
+            # Placeholder: gene acts as its own name, no coordinate info
+            tss_map[str(g)] = (str(g), "", 0)
+    return tss_map
+
+
+def _parse_gtf_tss(gtf_path: str, gene_names: List[str]) -> Dict[str, tuple]:
+    """Parse TSS positions from a GTF file for requested genes."""
+    tss_map = {}
+    gene_set = set(gene_names)
+
+    with open(gtf_path) as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            parts = line.strip().split("\t")
+            if len(parts) < 9:
+                continue
+            if parts[2] != "gene" and parts[2] != "transcript":
+                continue
+
+            # Extract gene name from attributes
+            attrs = {}
+            for a in parts[8].split(";"):
+                a = a.strip()
+                if not a:
+                    continue
+                if " " in a:
+                    key, val = a.split(" ", 1)
+                    attrs[key] = val.strip('"')
+                elif "=" in a:
+                    key, val = a.split("=", 1)
+                    attrs[key] = val.strip('"')
+
+            gname = attrs.get("gene_name") or attrs.get("gene_id") or attrs.get("ID")
+            if gname and gname in gene_set:
+                chrom = parts[0]
+                if parts[6] == "+":
+                    tss = int(parts[3])
+                else:
+                    tss = int(parts[4])
+                tss_map[gname] = (gname, chrom, tss)
+
+    return tss_map
+
+
+def _peak_tss_distance(peak_start: int, peak_end: int, tss_pos: int) -> int:
+    """Distance from peak center to TSS. Negative = peak upstream of TSS."""
+    peak_center = (peak_start + peak_end) // 2
+    return peak_center - tss_pos

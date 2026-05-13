@@ -1,0 +1,380 @@
+"""Effect size estimation for ATAC and RNA modalities."""
+
+from __future__ import annotations
+
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+from scipy import stats as scipy_stats
+
+from modes._types import ModalityEffect
+from modes.utils import benjamini_hochberg, empirical_bayes_moderate
+
+
+class EffectEstimator:
+    """
+    Estimate condition effects for ATAC and RNA modalities using NB GLM.
+
+    Parameters
+    ----------
+    condition_col : str
+        Column in data.obs specifying the condition of interest.
+    covariate_cols : list of str, optional
+        Additional covariates to include in GLMs.
+    donor_col : str, optional
+        Column for donor/replicate. Treated as fixed effect with EB shrinkage.
+    batch_col : str, optional
+        Column for batch. Treated as fixed effect.
+    use_empirical_bayes : bool
+        Apply empirical Bayes variance moderation. Default True.
+    """
+
+    def __init__(
+        self,
+        condition_col: str,
+        covariate_cols: Optional[List[str]] = None,
+        donor_col: Optional[str] = None,
+        batch_col: Optional[str] = None,
+        use_empirical_bayes: bool = True,
+    ):
+        self.condition_col = condition_col
+        self.covariate_cols = covariate_cols or []
+        self.donor_col = donor_col
+        self.batch_col = batch_col
+        self.use_empirical_bayes = use_empirical_bayes
+
+    def estimate_atac_effects(
+        self,
+        data,
+        peak_names: List[str],
+    ) -> Dict[str, ModalityEffect]:
+        """
+        Estimate condition effects for ATAC peaks.
+
+        Parameters
+        ----------
+        data : MoDEData
+        peak_names : list of str
+            Peak names to estimate effects for.
+
+        Returns
+        -------
+        dict mapping peak_id -> ModalityEffect
+        """
+        effects = {}
+        _, atac_ls = data.get_library_sizes()
+        X_base = self._build_design_matrix(data, offset_col=None)
+
+        for peak in peak_names:
+            if peak not in data.atac.columns:
+                continue
+            y = data.atac[peak].values.astype(float)
+            effect = self._fit_nb_glm(
+                y, X_base, offset=atac_ls, feature_name=peak
+            )
+            effects[peak] = effect
+
+        # Apply BH correction across all ATAC effects
+        pvals = np.array([e.p_value for e in effects.values()])
+        fdrs = benjamini_hochberg(pvals)
+        for (key, e), fdr in zip(effects.items(), fdrs):
+            e.fdr = float(fdr)
+            e.direction = int(np.sign(e.coef)) if e.fdr < 0.1 else 0
+
+        # EB moderation
+        if self.use_empirical_bayes:
+            effects = self._apply_eb_moderation_atac(effects, data)
+
+        return effects
+
+    def estimate_rna_effects(
+        self,
+        data,
+        gene_names: List[str],
+    ) -> Dict[str, ModalityEffect]:
+        """
+        Estimate condition effects for RNA genes.
+
+        Parameters
+        ----------
+        data : MoDEData
+        gene_names : list of str
+
+        Returns
+        -------
+        dict mapping gene_name -> ModalityEffect
+        """
+        effects = {}
+        rna_ls, _ = data.get_library_sizes()
+        X_base = self._build_design_matrix(data, offset_col=None)
+
+        for gene in gene_names:
+            if gene not in data.rna.columns:
+                continue
+            y = data.rna[gene].values.astype(float)
+            effect = self._fit_nb_glm(
+                y, X_base, offset=rna_ls, feature_name=gene
+            )
+            effects[gene] = effect
+
+        # BH correction
+        pvals = np.array([e.p_value for e in effects.values()])
+        fdrs = benjamini_hochberg(pvals)
+        for (key, e), fdr in zip(effects.items(), fdrs):
+            e.fdr = float(fdr)
+            e.direction = int(np.sign(e.coef)) if e.fdr < 0.1 else 0
+
+        # EB moderation
+        if self.use_empirical_bayes:
+            effects = self._apply_eb_moderation_rna(effects, data)
+
+        return effects
+
+    def estimate_effects(
+        self,
+        data,
+        peak_names: List[str],
+        gene_names: List[str],
+    ) -> Tuple[Dict[str, ModalityEffect], Dict[str, ModalityEffect]]:
+        """Run both ATAC and RNA effect estimation."""
+        atac_effects = self.estimate_atac_effects(data, peak_names)
+        rna_effects = self.estimate_rna_effects(data, gene_names)
+        return atac_effects, rna_effects
+
+    def _build_design_matrix(
+        self,
+        data,
+        offset_col: Optional[str] = None,
+    ) -> np.ndarray:
+        """
+        Build design matrix from data.obs.
+
+        Always includes intercept + condition column.
+        Adds covariates, donor, and batch as specified.
+        """
+        obs = data.obs
+        n = data.n_samples
+
+        # Condition
+        cond = obs[self.condition_col].values
+        if np.issubdtype(cond.dtype, np.number):
+            cond_col = cond.astype(float)
+        else:
+            # Categorical: create dummy with first category as reference
+            categories = sorted(set(cond))
+            if len(categories) == 2:
+                cond_col = (cond == categories[1]).astype(float)
+            else:
+                # Multi-category: use first as reference
+                cond_col = pd.Categorical(cond, categories=categories).codes.astype(float)
+
+        # Start with intercept + condition
+        X_cols = [np.ones(n), cond_col]
+        col_names = ["intercept", self.condition_col]
+
+        # Covariates
+        for cov in self.covariate_cols:
+            if cov in obs.columns:
+                vals = obs[cov].values
+                if np.issubdtype(vals.dtype, np.number):
+                    X_cols.append(vals.astype(float))
+                else:
+                    # One-hot encode categorical
+                    for cat in sorted(set(vals))[1:]:  # skip first as reference
+                        X_cols.append((vals == cat).astype(float))
+                        col_names.append(f"{cov}_{cat}")
+                    continue
+                col_names.append(cov)
+
+        # Batch
+        if self.batch_col and self.batch_col in obs.columns:
+            batches = obs[self.batch_col].values
+            for b in sorted(set(batches))[1:]:
+                X_cols.append((batches == b).astype(float))
+                col_names.append(f"batch_{b}")
+
+        # Donor
+        if self.donor_col and self.donor_col in obs.columns:
+            donors = obs[self.donor_col].values
+            for d in sorted(set(donors))[1:]:
+                X_cols.append((donors == d).astype(float))
+                col_names.append(f"donor_{d}")
+
+        X = np.column_stack(X_cols)
+        return X
+
+    def _fit_nb_glm(
+        self,
+        y: np.ndarray,
+        X: np.ndarray,
+        offset: np.ndarray = None,
+        feature_name: str = "",
+    ) -> ModalityEffect:
+        """
+        Fit NB GLM for a single feature.
+
+        y : (n,) count array
+        X : (n, p) design matrix
+        offset : (n,) log library size offset
+        """
+        result = _safe_fit_nb_glm(y, X, offset)
+
+        if result is None:
+            return ModalityEffect(
+                coef=np.nan, se=np.nan, z_score=0.0, p_value=1.0,
+                convergence=False,
+                model_summary={"error": "GLM did not converge"},
+            )
+
+        # Condition coefficient is at index 1 (after intercept)
+        coef = result.params[1] if len(result.params) > 1 else np.nan
+        se = result.bse[1] if len(result.bse) > 1 else np.nan
+
+        if np.isnan(coef) or np.isnan(se) or se <= 0:
+            return ModalityEffect(
+                coef=float(coef) if not np.isnan(coef) else 0.0,
+                se=float(se) if not np.isnan(se) else 1e6,
+                z_score=0.0,
+                p_value=1.0,
+                convergence=bool(getattr(result, "converged", False)),
+            )
+
+        z = coef / se
+        pval = 2 * scipy_stats.norm.sf(abs(z))
+
+        return ModalityEffect(
+            coef=float(coef),
+            se=float(se),
+            z_score=float(z),
+            p_value=float(pval),
+            convergence=bool(getattr(result, "converged", False)),
+            model_summary={
+                "aic": float(getattr(result, "aic", np.nan)),
+                "deviance": float(getattr(result, "deviance", np.nan)),
+                "df_resid": int(getattr(result, "df_resid", 0)),
+            },
+        )
+
+    def _apply_eb_moderation_atac(
+        self,
+        effects: Dict[str, ModalityEffect],
+        data,
+    ) -> Dict[str, ModalityEffect]:
+        """Apply EB variance moderation to ATAC effects."""
+        keys = list(effects.keys())
+        coefs = np.array([effects[k].coef for k in keys])
+        ses = np.array([effects[k].se for k in keys])
+
+        df = max(data.n_samples - min(data.n_samples, self._n_params(data)), 1)
+        mod_ses = empirical_bayes_moderate(coefs, ses, df=df)
+
+        for i, key in enumerate(keys):
+            if np.isfinite(mod_ses[i]) and mod_ses[i] > 0:
+                e = effects[key]
+                e.se = float(mod_ses[i])
+                e.z_score = float(e.coef / mod_ses[i])
+                # Recompute p-value using t-distribution with moderated df
+                t_stat = e.z_score
+                pval = 2 * scipy_stats.t.sf(abs(t_stat), df + 3)
+                e.p_value = float(pval)
+
+        # Re-BH correction
+        pvals = np.array([effects[k].p_value for k in keys])
+        fdrs = benjamini_hochberg(pvals)
+        for key, fdr in zip(keys, fdrs):
+            effects[key].fdr = float(fdr)
+            e = effects[key]
+            e.direction = int(np.sign(e.coef)) if e.fdr < 0.1 else 0
+
+        return effects
+
+    def _apply_eb_moderation_rna(
+        self,
+        effects: Dict[str, ModalityEffect],
+        data,
+    ) -> Dict[str, ModalityEffect]:
+        """Apply EB variance moderation to RNA effects."""
+        # Same logic as ATAC
+        return self._apply_eb_moderation_atac(effects, data)
+
+    def _n_params(self, data) -> int:
+        """Number of parameters in the design matrix."""
+        return self._build_design_matrix(data).shape[1]
+
+
+def _safe_fit_nb_glm(
+    y: np.ndarray, X: np.ndarray, offset: np.ndarray = None
+) -> Optional[Any]:
+    """
+    Fit NB GLM with fallback handling.
+
+    Returns statsmodels result or None on failure.
+    """
+    try:
+        import statsmodels.api as sm
+
+        # Scale offset for numerical stability
+        if offset is not None:
+            offset_adj = offset - np.mean(offset)
+        else:
+            offset_adj = np.zeros(len(y))
+
+        # Try NB with estimated alpha
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = sm.GLM(
+                endog=y,
+                exog=X,
+                offset=offset_adj,
+                family=sm.families.NegativeBinomial(),
+            )
+            result = model.fit(maxiter=100, disp=0)
+
+        if getattr(result, "converged", False):
+            return result
+
+        # Fallback 1: NB2 with fixed alpha=1
+        model2 = sm.GLM(
+            endog=y,
+            exog=X,
+            offset=offset_adj,
+            family=sm.families.NegativeBinomial(alpha=1.0),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result2 = model2.fit(maxiter=100, disp=0)
+
+        if getattr(result2, "converged", False):
+            return result2
+
+        # Fallback 2: Poisson
+        model3 = sm.GLM(
+            endog=y,
+            exog=X,
+            offset=offset_adj,
+            family=sm.families.Poisson(),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result3 = model3.fit(maxiter=200, disp=0)
+        return result3
+
+    except Exception as e:
+        # Final fallback: simplified model (intercept + condition only)
+        try:
+            import statsmodels.api as sm
+
+            X_simple = X[:, :2]
+            model = sm.GLM(
+                endog=y,
+                exog=X_simple,
+                offset=offset - np.mean(offset) if offset is not None else None,
+                family=sm.families.NegativeBinomial(alpha=1.0),
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return model.fit(maxiter=100, disp=0)
+        except Exception:
+            return None
