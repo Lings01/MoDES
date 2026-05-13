@@ -108,7 +108,7 @@ class TestStateClassifier:
         classifier = StateClassifier(use_empirical_bayes=False)
         states = classifier.classify(evidence_df)
         for s in states["state"]:
-            assert s in StateClassifier.BIOLOGICAL_STATES or s == "artifact_like"
+            assert s in StateClassifier.BIOLOGICAL_STATES
 
     def test_summarize_states(self, evidence_df):
         classifier = StateClassifier(use_empirical_bayes=False)
@@ -139,9 +139,10 @@ def test_low_quality_significant_event_gets_artifact_risk():
         use_empirical_bayes=False,
     )
     states = classifier.classify(evidence)
-    # Low quality single-modality signal should be artifact_like, not chromatin_primed
-    assert states.loc[0, "state"] == "artifact_like"
+    # Low quality single-modality signal: ATAC-only is chromatin_primed
+    assert states.loc[0, "state"] == "chromatin_primed"
     assert states.loc[0, "artifact_risk"] == "high"
+    assert "single_modality_low_quality" in states.loc[0, "artifact_reason"]
 
 
 def test_artifact_risk_low_medium_high():
@@ -165,4 +166,5 @@ def test_artifact_risk_low_medium_high():
     states = classifier.classify(evidence)
     assert states.loc[0, "artifact_risk"] == "low"
     assert states.loc[1, "artifact_risk"] == "medium"
-    assert states.loc[2, "artifact_risk"] == "high"
+    # quality=0.1 < 0.3: low_quality_score, so medium (no single_modality since both non-sig)
+    assert states.loc[2, "artifact_risk"] == "medium"

@@ -161,6 +161,45 @@ class TestMoDESResult:
         assert "MoDES" in content
 
 
+def test_event_table_contains_artifact_risk(synthetic_bulk_data_small):
+    """Event table should contain artifact_risk, artifact_reason, event_pval, event_fdr."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+    assert "artifact_risk" in result.event_table.columns
+    assert "artifact_reason" in result.event_table.columns
+    assert "event_pval" in result.event_table.columns
+    assert "event_fdr" in result.event_table.columns
+    assert result.event_table["event_fdr"].between(0, 1).all()
+    # artifact_risk values should be from the allowed set
+    valid_risks = {"low", "medium", "high"}
+    assert set(result.event_table["artifact_risk"].dropna().unique()).issubset(valid_risks)
+
+
+def test_filter_exclude_high_artifact(synthetic_bulk_data_small):
+    """Filter should support exclude_high_artifact."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+    filtered = result.filter(exclude_high_artifact=True)
+    if "artifact_risk" in filtered.columns:
+        assert "high" not in set(filtered["artifact_risk"])
+
+
+def test_to_tsv_writes_model_diagnostics(synthetic_bulk_data_small, tmp_path):
+    """to_tsv should write model_diagnostics.tsv."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+    result.to_tsv(str(tmp_path))
+    assert os.path.exists(os.path.join(str(tmp_path), "model_diagnostics.tsv"))
+    diag = pd.read_csv(os.path.join(str(tmp_path), "model_diagnostics.tsv"), sep="\t")
+    assert "model_used" in diag.columns
+    assert "family" in diag.columns
+    assert "converged" in diag.columns
+    assert "dropped_covariates" in diag.columns
+
+
 def test_no_annotation_raises_clear_error(synthetic_bulk_data_small):
     """Plain gene symbols without annotation should raise clear error."""
     data, _, tss_map = synthetic_bulk_data_small

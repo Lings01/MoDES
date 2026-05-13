@@ -52,6 +52,9 @@ TEMPLATE = """<!DOCTYPE html>
   .rna_only {{ background: #1f77b433; color: #0d3b6e; }}
   .artifact_like {{ background: #d6272833; color: #8b1a1a; }}
   .null {{ background: #7f7f7f33; color: #555; }}
+  .artifact-risk-low {{ color: #2e7d32; }}
+  .artifact-risk-medium {{ color: #ef6c00; }}
+  .artifact-risk-high {{ color: #c62828; font-weight: bold; }}
   img.plot {{ max-width: 100%; height: auto; margin: 10px 0;
               border: 1px solid #e0e0e0; border-radius: 4px; }}
   .footer {{ margin-top: 40px; padding-top: 10px; border-top: 1px solid #ddd;
@@ -70,6 +73,7 @@ TEMPLATE = """<!DOCTYPE html>
 <h2>State Distribution</h2>
 {state_distribution_table}
 <img class="plot" src="data:image/png;base64,{plot_state_dist}" alt="State Distribution">
+{artifact_summary_html}
 
 <h2>Event Table (Top 50)</h2>
 {event_table_html}
@@ -136,12 +140,20 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
         ("Concordant", str(state_counts.get("concordant", 0))),
         ("Chromatin Primed", str(state_counts.get("chromatin_primed", 0))),
         ("RNA Only", str(state_counts.get("rna_only", 0))),
-        ("Artifact-like", str(state_counts.get("artifact_like", 0))),
         ("Null", str(state_counts.get("null", 0))),
         ("Samples", str(results.params.get("n_samples", "N/A"))),
         ("Genes", str(results.params.get("n_genes", "N/A"))),
     ]
-    for value, label in cards_data:
+    # Artifact risk distribution if available
+    if "artifact_risk" in results.event_table.columns:
+        risk_counts = results.event_table["artifact_risk"].value_counts()
+        for risk_level in ["high", "medium", "low"]:
+            if risk_level in risk_counts.index:
+                cards_data.append(
+                    (f"Artifact Risk: {risk_level}",
+                     str(risk_counts.get(risk_level, 0)))
+                )
+    for label, value in cards_data:
         summary_cards += f'<div class="summary-card"><div class="value">{_esc(value)}</div><div class="label">{_esc(label)}</div></div>\n'
 
     # State distribution table
@@ -154,16 +166,39 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
             f'<td>{count / len(results.event_table) * 100:.1f}%</td></tr>\n'
         )
 
+    # Artifact risk table
+    artifact_rows = ""
+    if "artifact_risk" in results.event_table.columns:
+        risk_counts = results.event_table["artifact_risk"].value_counts()
+        for risk in ["low", "medium", "high"]:
+            cnt = risk_counts.get(risk, 0)
+            artifact_rows += (
+                f'<tr><td><span class="artifact-risk-{risk}">{risk}</span></td>'
+                f'<td>{cnt}</td>'
+                f'<td>{cnt / len(results.event_table) * 100:.1f}%</td></tr>\n'
+            )
+
     state_table_html = f"""
     <table>
       <tr><th>State</th><th>Count</th><th>Fraction</th></tr>
       {state_rows}
     </table>"""
 
-    # Event table (top 50 by posterior)
+    # Artifact risk summary (if available)
+    artifact_summary_html = ""
+    if artifact_rows:
+        artifact_summary_html = f"""
+        <h2>Artifact Risk Distribution</h2>
+        <table>
+          <tr><th>Risk Level</th><th>Count</th><th>Fraction</th></tr>
+          {artifact_rows}
+        </table>"""
+
+    # Event table (top 50 by confidence)
     top_events = results.event_table.nlargest(50, "confidence")
     display_cols = [
         "event_id", "gene", "peak_id", "state", "confidence",
+        "artifact_risk",
         "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
     ]
     avail_cols = [c for c in display_cols if c in top_events.columns]
@@ -199,6 +234,7 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         summary_cards=summary_cards,
         state_distribution_table=state_table_html,
+        artifact_summary_html=artifact_summary_html,
         plot_state_dist=plot_state_dist,
         plot_volcano_atac=plot_volcano_atac_img,
         plot_volcano_rna=plot_volcano_rna_img,

@@ -138,11 +138,11 @@ class ConditionalDecomposition:
         Returns dict of conditional effect estimates.
         """
         y = data.rna[gene].values.astype(float)
+        # Build design matrix outside try to let validation errors propagate
         X_base = self._build_design_matrix(data)
 
         # Add ATAC as continuous covariate
         atac_vals = data.atac[peak].values.astype(float)
-        # Normalize ATAC to prevent scale issues
         atac_mean = np.mean(atac_vals)
         if atac_mean > 0:
             atac_vals = atac_vals / atac_mean
@@ -164,7 +164,6 @@ class ConditionalDecomposition:
                 result = model.fit(maxiter=100, disp=0)
 
             if not getattr(result, "converged", False):
-                # Fall back to Poisson
                 model2 = sm.GLM(
                     endog=y,
                     exog=X,
@@ -178,7 +177,7 @@ class ConditionalDecomposition:
             converged = getattr(result, "converged", False)
 
             if converged and len(result.params) > 1:
-                coef = result.params[1]  # condition coefficient
+                coef = result.params[1]
                 se = result.bse[1]
                 z = coef / se if se > 0 else 0.0
                 pval = 2 * scipy_stats.norm.sf(abs(z))
@@ -195,6 +194,8 @@ class ConditionalDecomposition:
             else:
                 return self._null_conditional()
 
+        except (NotImplementedError, ValueError):
+            raise
         except Exception:
             return self._null_conditional()
 

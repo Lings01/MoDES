@@ -104,3 +104,7 @@ class EventResult:
     state: str
     confidence: float
     quality_score: float
+    artifact_risk: str = "low"
+    artifact_reason: str = ""
+    event_pval: float = 1.0
+    event_fdr: float = 1.0

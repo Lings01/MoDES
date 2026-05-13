@@ -71,6 +71,34 @@ result.to_graphml("output/event_network.graphml")
 result.to_report("output/report.html")
 ```
 
+### 输出文件
+
+| 文件 | 说明 |
+|------|------|
+| event_table.tsv | 主输出表 |
+| event_state_confidence.tsv | 状态置信度 |
+| event_layer_effects.tsv | 每层效应大小 |
+| event_evidence_vectors.tsv | 证据向量 |
+| model_diagnostics.tsv | 模型诊断信息 |
+| run_params.tsv | 运行参数 |
+
+#### event_table.tsv 字段
+
+| 字段 | 说明 |
+|------|------|
+| event_id | 事件唯一标识 |
+| gene | target gene |
+| peak_id | regulatory peak |
+| state | biological state (concordant / chromatin_primed / rna_only / discordant_opposite / null) |
+| state_confidence | 状态置信度 [0, 1] |
+| artifact_risk | 技术伪影风险 (low / medium / high)，不是生物状态 |
+| artifact_reason | 伪影原因（分号分隔） |
+| event_pval | event-level p-value |
+| event_fdr | event-level BH-corrected FDR |
+| atac_coef / atac_pval / atac_fdr | ATAC 效应估计 |
+| rna_coef / rna_pval / rna_fdr | RNA 效应估计 |
+| rna_after_atac_coef / rna_after_atac_pval / rna_after_atac_fdr | 控制 linked ATAC peak 后的条件效应 |
+
 ## 算法流程
 
 1. **Event Candidate Construction** — 将 peaks 链接到 target genes

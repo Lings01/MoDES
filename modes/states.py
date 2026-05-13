@@ -141,13 +141,13 @@ class StateClassifier:
         Apply EB refinement. Default True.
     """
 
-    BIOLOGICAL_STATES = [
+    BIOLOGICAL_STATES = {
         "null",
         "concordant",
         "chromatin_primed",
         "rna_only",
         "discordant_opposite",
-    ]
+    }
 
     ARTIFACT_RISK_LEVELS = ["low", "medium", "high"]
 
@@ -177,6 +177,11 @@ class StateClassifier:
         if self.use_empirical_bayes:
             states = self._empirical_bayes_classify(evidence, states)
 
+        # Validate: no artifact_like as primary state
+        for s in states["state"]:
+            if s not in self.BIOLOGICAL_STATES:
+                raise ValueError(f"Invalid biological state returned: {s}")
+
         return states
 
     def _rule_based_classify(self, evidence: pd.DataFrame) -> pd.DataFrame:
@@ -187,40 +192,51 @@ class StateClassifier:
             atac_sig = row["atac_fdr"] < self.fdr_threshold
             rna_sig = row["rna_fdr"] < self.fdr_threshold
             same_dir = row["atac_direction"] == row["rna_direction"]
-            low_qual = row["quality_score"] < self.quality_threshold
-            quality = row["quality_score"]
 
-            # Compute artifact risk first
-            if quality < self.quality_threshold:
-                artifact_risk = "high"
-            elif quality < self.quality_threshold * 2:
-                artifact_risk = "medium"
-            else:
-                artifact_risk = "low"
-
-            # Determine biological state
-            if low_qual and (atac_sig ^ rna_sig):
-                # Single-modality signal with low quality -> artifact_like
-                state = "artifact_like"
-            elif atac_sig and rna_sig and same_dir:
+            # Determine biological state only (NO artifact_like as state)
+            if atac_sig and rna_sig and same_dir:
                 state = "concordant"
+            elif atac_sig and rna_sig and not same_dir:
+                state = "discordant_opposite"
             elif atac_sig and not rna_sig:
                 state = "chromatin_primed"
             elif not atac_sig and rna_sig:
                 state = "rna_only"
-            elif atac_sig and rna_sig and not same_dir:
-                state = "discordant_opposite"
             else:
                 state = "null"
+
+            # Compute artifact risk separately
+            artifact_risk, artifact_reason = self._compute_artifact_risk(row)
 
             results.append({
                 "event_id": row["event_id"],
                 "state": state,
                 "state_confidence": 1.0,
                 "artifact_risk": artifact_risk,
+                "artifact_reason": artifact_reason,
             })
 
         return pd.DataFrame(results)
+
+    def _compute_artifact_risk(self, row: pd.Series) -> tuple:
+        """Compute artifact risk level and reason string."""
+        reasons = []
+        quality_score = float(row.get("quality_score", 1.0))
+        atac_sig = float(row.get("atac_fdr", 1.0)) < self.fdr_threshold
+        rna_sig = float(row.get("rna_fdr", 1.0)) < self.fdr_threshold
+
+        if quality_score < self.quality_threshold:
+            reasons.append("low_quality_score")
+        elif quality_score < self.quality_threshold * 2:
+            reasons.append("borderline_quality")
+        if quality_score < self.quality_threshold * 2 and (atac_sig ^ rna_sig):
+            reasons.append("single_modality_low_quality")
+
+        if not reasons:
+            return "low", ""
+        if "single_modality_low_quality" in reasons:
+            return "high", ";".join(reasons)
+        return "medium", ";".join(reasons)
 
     def _empirical_bayes_classify(
         self,

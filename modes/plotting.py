@@ -13,7 +13,7 @@ STATE_COLORS = {
     "concordant": "#2ca02c",
     "chromatin_primed": "#ff7f0e",
     "rna_only": "#1f77b4",
-    "artifact_like": "#d62728",
+    "discordant_opposite": "#d62728",
     "null": "#7f7f7f",
 }
 
@@ -68,7 +68,7 @@ def plot_volcano_atac(results, fdr_threshold: float = 0.1) -> "plt.Figure":
         c="#cccccc", s=8, alpha=0.5, label=f"NS (FDR >= {fdr_threshold})",
     )
 
-    for state in ["concordant", "chromatin_primed", "rna_only", "artifact_like"]:
+    for state in ["concordant", "chromatin_primed", "rna_only", "discordant_opposite"]:
         submask = sig_mask & (df["state"] == state)
         if submask.sum() == 0:
             continue
@@ -104,7 +104,7 @@ def plot_volcano_rna(results, fdr_threshold: float = 0.1) -> "plt.Figure":
         c="#cccccc", s=8, alpha=0.5, label=f"NS (FDR >= {fdr_threshold})",
     )
 
-    for state in ["concordant", "chromatin_primed", "rna_only", "artifact_like"]:
+    for state in ["concordant", "chromatin_primed", "rna_only", "discordant_opposite"]:
         submask = sig_mask & (df["state"] == state)
         if submask.sum() == 0:
             continue
@@ -131,7 +131,7 @@ def plot_atac_vs_rna(results, color_by: str = "state") -> "plt.Figure":
 
     fig, ax = plt.subplots(figsize=(7, 6))
 
-    for state in ["concordant", "chromatin_primed", "rna_only", "artifact_like", "null"]:
+    for state in ["concordant", "chromatin_primed", "rna_only", "discordant_opposite", "null"]:
         sub = df[df["state"] == state]
         if sub.empty:
             continue
@@ -193,7 +193,7 @@ def plot_quality_distribution(results) -> "plt.Figure":
     import matplotlib.pyplot as plt
 
     df = results.event_table.copy()
-    states = [s for s in ["concordant", "chromatin_primed", "rna_only", "artifact_like", "null"]
+    states = [s for s in ["concordant", "chromatin_primed", "rna_only", "discordant_opposite", "null"]
               if s in df["state"].values]
 
     n_states = len(states)

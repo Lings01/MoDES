@@ -226,13 +226,28 @@ class EffectEstimator:
         """Fit NB GLM for a single feature."""
         result = _safe_fit_nb_glm(y, X, offset)
 
+        def _build_summary(res) -> dict:
+            """Extract model diagnostics from result."""
+            return {
+                "family": getattr(res, "_modes_family", "unknown"),
+                "model_used": getattr(res, "_modes_model_used", "unknown"),
+                "alpha": getattr(res, "_modes_alpha", None),
+                "alpha_estimated": getattr(res, "_modes_alpha_estimated", False),
+                "converged": bool(getattr(res, "converged", False)),
+                "dropped_covariates": getattr(res, "_modes_dropped_covariates", False),
+                "warning": "",
+            }
+
         if result is None:
             return ModalityEffect(
                 coef=np.nan, se=np.nan, z_score=0.0, p_value=1.0,
                 convergence=False,
                 model_summary={
+                    "family": "unknown",
                     "model_used": "failed",
-                    "convergence": False,
+                    "alpha": None,
+                    "alpha_estimated": False,
+                    "converged": False,
                     "dropped_covariates": False,
                     "warning": "GLM did not converge at any level",
                 },
@@ -243,20 +258,20 @@ class EffectEstimator:
         se = result.bse[1] if len(result.bse) > 1 else np.nan
 
         if np.isnan(coef) or np.isnan(se) or se <= 0:
+            s = _build_summary(result)
+            s["converged"] = False
+            s["warning"] = "Invalid coefficient or standard error."
             return ModalityEffect(
                 coef=float(coef) if not np.isnan(coef) else 0.0,
                 se=float(se) if not np.isnan(se) else 1e6,
                 z_score=0.0,
                 p_value=1.0,
-                convergence=bool(getattr(result, "converged", False)),
+                convergence=False,
+                model_summary=s,
             )
 
         z = coef / se
         pval = 2 * scipy_stats.norm.sf(abs(z))
-
-        dropped_covariates = bool(getattr(result, "_modes_dropped_covariates", False))
-        model_used = "nb_simple_fallback" if dropped_covariates else "nb_fixed_alpha"
-        warning = "Full model failed; used intercept + condition only." if dropped_covariates else ""
 
         return ModalityEffect(
             coef=float(coef),
@@ -264,17 +279,7 @@ class EffectEstimator:
             z_score=float(z),
             p_value=float(pval),
             convergence=bool(getattr(result, "converged", False)),
-            model_summary={
-                "family": "negative_binomial",
-                "alpha": 1.0,
-                "alpha_estimated": False,
-                "model_used": model_used,
-                "aic": float(getattr(result, "aic", np.nan)),
-                "deviance": float(getattr(result, "deviance", np.nan)),
-                "df_resid": int(getattr(result, "df_resid", 0)),
-                "dropped_covariates": dropped_covariates,
-                "warning": warning,
-            },
+            model_summary=_build_summary(result),
         )
 
     def _apply_eb_moderation_atac(
@@ -331,6 +336,7 @@ def _safe_fit_nb_glm(
     Fit NB GLM with fallback handling.
 
     Returns statsmodels result or None on failure.
+    Each successful result is tagged with _modes_* diagnostic attributes.
     """
     try:
         import statsmodels.api as sm
@@ -353,6 +359,11 @@ def _safe_fit_nb_glm(
             result = model.fit(maxiter=100, disp=0)
 
         if getattr(result, "converged", False):
+            result._modes_model_used = "nb_default_alpha"
+            result._modes_family = "negative_binomial"
+            result._modes_alpha = None
+            result._modes_alpha_estimated = False
+            result._modes_dropped_covariates = False
             return result
 
         # Fallback 1: NB2 with fixed alpha=1
@@ -367,6 +378,11 @@ def _safe_fit_nb_glm(
             result2 = model2.fit(maxiter=100, disp=0)
 
         if getattr(result2, "converged", False):
+            result2._modes_model_used = "nb_fixed_alpha"
+            result2._modes_family = "negative_binomial"
+            result2._modes_alpha = 1.0
+            result2._modes_alpha_estimated = False
+            result2._modes_dropped_covariates = False
             return result2
 
         # Fallback 2: Poisson
@@ -379,11 +395,15 @@ def _safe_fit_nb_glm(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             result3 = model3.fit(maxiter=200, disp=0)
+        result3._modes_model_used = "poisson_fallback"
+        result3._modes_family = "poisson"
+        result3._modes_alpha = None
+        result3._modes_alpha_estimated = False
+        result3._modes_dropped_covariates = False
         return result3
 
     except Exception as e:
-        # Final fallback: simplified model
-        # Mark explicitly so the user knows covariates were dropped
+        # Final fallback: simplified model (intercept + condition only)
         try:
             import statsmodels.api as sm
 
@@ -397,8 +417,10 @@ def _safe_fit_nb_glm(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 result = model.fit(maxiter=100, disp=0)
-            # Attach fallback metadata
-            result._modes_fallback = True
+            result._modes_model_used = "nb_simple_fallback"
+            result._modes_family = "negative_binomial"
+            result._modes_alpha = 1.0
+            result._modes_alpha_estimated = False
             result._modes_dropped_covariates = True
             return result
         except Exception:

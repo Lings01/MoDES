@@ -25,6 +25,8 @@ def _event_result_columns():
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
         "state", "confidence", "quality_score",
+        "artifact_risk", "artifact_reason",
+        "event_pval", "event_fdr",
     ]
 
 
@@ -253,7 +255,9 @@ class MoDES:
                 params=params,
             )
 
-        records = []
+        # --- Pass 1: collect per-event data and compute event_pval ---
+        raw_data = []
+        from modes.utils import benjamini_hochberg
 
         for _, event in self.events.iterrows():
             eid = event["event_id"]
@@ -263,7 +267,7 @@ class MoDES:
             atac = self.atac_effects.get(peak)
             rna = self.rna_effects.get(gene)
 
-            # Find conditional effect
+            # Conditional effect
             cond_row = self.conditional_effects[
                 self.conditional_effects["event_id"] == eid
             ]
@@ -279,26 +283,73 @@ class MoDES:
                 rna_after_pval = cr.get("rna_after_atac_pval", 1.0)
                 rna_after_fdr = cr.get("rna_after_atac_fdr", 1.0)
 
-            # Find state
+            # State
             state_row = self.states[self.states["event_id"] == eid]
             if len(state_row) == 0:
                 state = "null"
                 confidence = 1.0
+                artifact_risk = "low"
+                artifact_reason = ""
             else:
                 state = state_row.iloc[0]["state"]
                 confidence = state_row.iloc[0]["state_confidence"]
+                artifact_risk = state_row.iloc[0].get("artifact_risk", "low")
+                artifact_reason = state_row.iloc[0].get("artifact_reason", "")
 
             # Quality
             ev_row = self.evidence[self.evidence["event_id"] == eid]
             quality = ev_row.iloc[0]["quality_score"] if len(ev_row) > 0 else 0.5
 
+            # Event-level p-value based on state
+            atac_pval = atac.p_value if atac else 1.0
+            rna_pval = rna.p_value if rna else 1.0
+            if state == "concordant":
+                event_pval = max(atac_pval, rna_pval)
+            elif state == "discordant_opposite":
+                event_pval = max(atac_pval, rna_pval)
+            elif state == "chromatin_primed":
+                event_pval = atac_pval
+            elif state == "rna_only":
+                event_pval = rna_pval
+            else:
+                event_pval = 1.0
+
+            raw_data.append({
+                "event_id": eid,
+                "peak_id": peak,
+                "gene": gene,
+                "tf_name": event.get("tf_name"),
+                "context": event.get("context", ""),
+                "atac": atac,
+                "rna": rna,
+                "rna_after_coef": rna_after_coef,
+                "rna_after_se": rna_after_se,
+                "rna_after_pval": rna_after_pval,
+                "rna_after_fdr": rna_after_fdr,
+                "state": state,
+                "confidence": confidence,
+                "artifact_risk": artifact_risk,
+                "artifact_reason": artifact_reason,
+                "quality": quality,
+                "event_pval": event_pval,
+            })
+
+        # Event-level BH correction
+        event_pvals = np.array([d["event_pval"] for d in raw_data])
+        event_fdrs = benjamini_hochberg(event_pvals)
+
+        # --- Pass 2: build EventResult records ---
+        records = []
+        for d, event_fdr in zip(raw_data, event_fdrs):
+            atac = d["atac"]
+            rna = d["rna"]
             records.append(
                 EventResult(
-                    event_id=eid,
-                    tf_name=event.get("tf_name"),
-                    peak_id=peak,
-                    gene=gene,
-                    context=event.get("context", ""),
+                    event_id=d["event_id"],
+                    tf_name=d["tf_name"],
+                    peak_id=d["peak_id"],
+                    gene=d["gene"],
+                    context=d["context"],
                     atac_coef=atac.coef if atac else np.nan,
                     atac_se=atac.se if atac else np.nan,
                     atac_pval=atac.p_value if atac else 1.0,
@@ -309,13 +360,17 @@ class MoDES:
                     rna_pval=rna.p_value if rna else 1.0,
                     rna_fdr=rna.fdr if rna else 1.0,
                     rna_direction=rna.direction if rna else 0,
-                    rna_after_atac_coef=rna_after_coef,
-                    rna_after_atac_se=rna_after_se,
-                    rna_after_atac_pval=rna_after_pval,
-                    rna_after_atac_fdr=rna_after_fdr,
-                    state=state,
-                    confidence=confidence,
-                    quality_score=quality,
+                    rna_after_atac_coef=d["rna_after_coef"],
+                    rna_after_atac_se=d["rna_after_se"],
+                    rna_after_atac_pval=d["rna_after_pval"],
+                    rna_after_atac_fdr=d["rna_after_fdr"],
+                    state=d["state"],
+                    confidence=d["confidence"],
+                    quality_score=d["quality"],
+                    artifact_risk=d["artifact_risk"],
+                    artifact_reason=d["artifact_reason"],
+                    event_pval=d["event_pval"],
+                    event_fdr=float(event_fdr),
                 )
             )
 
@@ -331,11 +386,14 @@ class MoDES:
             "n_peaks": self.data.n_peaks,
         }
 
+        model_diag = self._build_model_diagnostics()
+
         return MoDESResult(
             event_table=pd.DataFrame([r.__dict__ for r in records]),
             state_probabilities=self.states.copy() if self.states is not None else None,
             layer_effects=self._build_layer_effects_df(),
             evidence_vectors=self.evidence.copy() if self.evidence is not None else None,
+            model_diagnostics=model_diag,
             params=params,
         )
 
@@ -365,6 +423,37 @@ class MoDES:
             })
         return pd.DataFrame(records)
 
+    def _build_model_diagnostics(self) -> pd.DataFrame:
+        """Collect model diagnostics from all effect estimates."""
+        rows = []
+        for peak_id, e in (self.atac_effects or {}).items():
+            s = e.model_summary or {}
+            rows.append({
+                "feature_id": peak_id,
+                "modality": "ATAC",
+                "model_used": s.get("model_used", "unknown"),
+                "family": s.get("family", "unknown"),
+                "alpha": s.get("alpha"),
+                "alpha_estimated": s.get("alpha_estimated", False),
+                "converged": s.get("converged", e.convergence),
+                "dropped_covariates": s.get("dropped_covariates", False),
+                "warning": s.get("warning", ""),
+            })
+        for gene_name, e in (self.rna_effects or {}).items():
+            s = e.model_summary or {}
+            rows.append({
+                "feature_id": gene_name,
+                "modality": "RNA",
+                "model_used": s.get("model_used", "unknown"),
+                "family": s.get("family", "unknown"),
+                "alpha": s.get("alpha"),
+                "alpha_estimated": s.get("alpha_estimated", False),
+                "converged": s.get("converged", e.convergence),
+                "dropped_covariates": s.get("dropped_covariates", False),
+                "warning": s.get("warning", ""),
+            })
+        return pd.DataFrame(rows)
+
 
 class MoDESResult:
     """
@@ -390,12 +479,14 @@ class MoDESResult:
         state_probabilities: Optional[pd.DataFrame] = None,
         layer_effects: Optional[pd.DataFrame] = None,
         evidence_vectors: Optional[pd.DataFrame] = None,
+        model_diagnostics: Optional[pd.DataFrame] = None,
         params: Optional[dict] = None,
     ):
         self.event_table = event_table
         self.state_probabilities = state_probabilities
         self.layer_effects = layer_effects
         self.evidence_vectors = evidence_vectors
+        self.model_diagnostics = model_diagnostics
         self.params = params or {}
 
     def summary(self) -> str:
@@ -429,6 +520,9 @@ class MoDESResult:
         fdr_threshold: Optional[float] = None,
         min_atac_fdr: Optional[float] = None,
         min_rna_fdr: Optional[float] = None,
+        exclude_high_artifact: bool = False,
+        max_artifact_risk: Optional[str] = None,
+        min_event_fdr: Optional[float] = None,
     ) -> pd.DataFrame:
         """
         Filter the event table.
@@ -438,11 +532,17 @@ class MoDESResult:
         state : str, optional
             Keep only events with this state.
         min_confidence : float
-            Minimum confidence probability.
+            Minimum state confidence.
         fdr_threshold : float, optional
             Keep events where atac_fdr < threshold OR rna_fdr < threshold.
         min_atac_fdr, min_rna_fdr : float, optional
             Per-modality FDR thresholds.
+        exclude_high_artifact : bool
+            Exclude events with artifact_risk == "high".
+        max_artifact_risk : str, optional
+            Maximum allowed artifact risk ("low" < "medium" < "high").
+        min_event_fdr : float, optional
+            Minimum event-level FDR threshold.
 
         Returns
         -------
@@ -467,6 +567,19 @@ class MoDESResult:
 
         if min_rna_fdr is not None:
             df = df[df["rna_fdr"] < min_rna_fdr]
+
+        if min_event_fdr is not None and "event_fdr" in df.columns:
+            df = df[df["event_fdr"] < min_event_fdr]
+
+        if exclude_high_artifact and "artifact_risk" in df.columns:
+            df = df[df["artifact_risk"] != "high"]
+
+        if max_artifact_risk is not None and "artifact_risk" in df.columns:
+            risk_order = {"low": 0, "medium": 1, "high": 2}
+            max_rank = risk_order.get(max_artifact_risk, 2)
+            df = df[
+                df["artifact_risk"].map(risk_order).fillna(0) <= max_rank
+            ]
 
         return df.reset_index(drop=True)
 
@@ -494,6 +607,13 @@ class MoDESResult:
         if self.evidence_vectors is not None:
             self.evidence_vectors.to_csv(
                 os.path.join(output_dir, "event_evidence_vectors.tsv"),
+                sep="\t", index=False,
+            )
+
+        # Write model diagnostics
+        if hasattr(self, "model_diagnostics") and self.model_diagnostics is not None:
+            self.model_diagnostics.to_csv(
+                os.path.join(output_dir, "model_diagnostics.tsv"),
                 sep="\t", index=False,
             )
 
