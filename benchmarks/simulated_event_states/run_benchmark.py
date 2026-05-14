@@ -32,15 +32,15 @@ def generate_benchmark_data(
 
     # Define states and their effect patterns
     state_configs = [
-        ("concordant", (3.0, 2.5)),
-        ("chromatin_primed", (3.0, 0.0)),
-        ("rna_only", (0.0, 2.5)),
-        ("discordant_opposite", (3.0, -1.5)),
+        ("concordant", (5.0, 4.0)),
+        ("chromatin_primed", (5.0, 0.0)),
+        ("rna_only", (0.0, 4.0)),
+        ("discordant_opposite", (4.0, -3.0)),
         ("null", (0.0, 0.0)),
     ]
 
     # Add filler to balance library sizes
-    n_filler = 200
+    n_filler = 500
     total_events = n_events_per_state * len(state_configs)
     gene_names = []
     peak_names = []
@@ -48,37 +48,49 @@ def generate_benchmark_data(
     atac_effects = []
     rna_effects = []
 
+    # Spread events across chromosomes to avoid cross-linking
+    chromosomes = ["chr1", "chr2", "chr3", "chr4", "chr5",
+                   "chr6", "chr7", "chr8", "chr9", "chr10"]
+    event_idx = 0
     for state, (a_eff, r_eff) in state_configs:
         for i in range(n_events_per_state):
-            gene_names.append(f"g_{state}_{i}:chr1:{1000+i*2000}")
-            peak_names.append(f"chr1:{900+i*2000}-{1100+i*2000}")
+            ch = chromosomes[event_idx % len(chromosomes)]
+            pos = 500000 + (event_idx // len(chromosomes)) * 1000000
+            gene_names.append(f"g_{state}_{i}:{ch}:{pos}")
+            peak_names.append(f"{ch}:{pos-100}-{pos+100}")
             true_states.append(state)
             atac_effects.append(a_eff)
             rna_effects.append(r_eff)
+            event_idx += 1
 
     n_real = len(gene_names)
     all_gene_names = gene_names + [f"filler_g_{i}" for i in range(n_filler)]
     all_peak_names = peak_names + [f"filler_p_{i}" for i in range(n_filler)]
 
-    rna = np.zeros((n_total, n_real + n_filler))
-    atac = np.zeros((n_total, n_real + n_filler))
+    rna = np.zeros((n_total, n_real + n_filler), dtype=float)
+    atac = np.zeros((n_total, n_real + n_filler), dtype=float)
 
-    baseline_rna = rng.poisson(300, n_real + n_filler)
-    baseline_atac = rng.poisson(200, n_real + n_filler)
+    baseline_rna_ctrl = np.concatenate([
+        rng.poisson(300, n_real),
+        rng.poisson(500, n_filler),
+    ]).astype(float)
+    baseline_atac_ctrl = np.concatenate([
+        rng.poisson(200, n_real),
+        rng.poisson(400, n_filler),
+    ]).astype(float)
 
     for s in range(n_total):
-        is_trt = condition[s] == "trt"
-        rna[s, :] = rng.poisson(baseline_rna)
-        atac[s, :] = rng.poisson(baseline_atac)
-
-    for i in range(n_real):
-        if condition[0] == "ctrl":  # trt indices: n_per_group to end
-            atac[n_per_group:, i] = rng.poisson(
-                np.exp(atac_effects[i]) * baseline_atac[i], n_per_group
-            ).astype(float)
-            rna[n_per_group:, i] = rng.poisson(
-                np.exp(rna_effects[i]) * baseline_rna[i], n_per_group
-            ).astype(float)
+        if condition[s] == "ctrl":
+            rna[s, :] = rng.poisson(baseline_rna_ctrl)
+            atac[s, :] = rng.poisson(baseline_atac_ctrl)
+        else:
+            rna_trt = rng.poisson(baseline_rna_ctrl).astype(float)
+            atac_trt = rng.poisson(baseline_atac_ctrl).astype(float)
+            for i in range(n_real):
+                rna_trt[i] = float(rng.poisson(np.exp(rna_effects[i]) * baseline_rna_ctrl[i]))
+                atac_trt[i] = float(rng.poisson(np.exp(atac_effects[i]) * baseline_atac_ctrl[i]))
+            rna[s, :] = rna_trt
+            atac[s, :] = atac_trt
 
     obs = pd.DataFrame({"condition": condition}, index=[f"s{i}" for i in range(n_total)])
     rna_df = pd.DataFrame(rna, index=obs.index, columns=all_gene_names)
@@ -86,11 +98,12 @@ def generate_benchmark_data(
 
     tss_map = {}
     for g in gene_names:
+        # Parse "g_CONC_0:chr1:500000" format
         parts = g.split(":chr")
         name = parts[0]
-        coord_parts = parts[1].split(":")
-        chrom = "chr" + coord_parts[0]
-        pos = int(coord_parts[1])
+        rest = parts[1]
+        chrom = "chr" + rest.split(":")[0]
+        pos = int(rest.split(":")[1])
         tss_map[g] = (name, chrom, pos)
 
     gt = pd.DataFrame({
@@ -131,7 +144,7 @@ def main():
 
     t0 = time.time()
     print("\n[1/4] Generating benchmark data...")
-    data, gt, tss_map = generate_benchmark_data(n_per_group=15, n_events_per_state=40)
+    data, gt, tss_map = generate_benchmark_data(n_per_group=15, n_events_per_state=10)
     print(f"      {len(data.gene_names)} genes, {data.n_samples} samples, {len(gt)} events")
 
     print("\n[2/4] Running MoDES...")
