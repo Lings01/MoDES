@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: MoDES
+message: >-
+  If you use this software, please cite it using the metadata from this file.
+type: software
+authors:
+  - name: MoDES contributors
+repository-code: 'https://github.com/Lings01/MoDES'
+abstract: >-
+  MoDES (Multi-Omics Discordance/Event State inference) is a statistical
+  framework that treats regulatory events as the primary unit of analysis.
+  It classifies cross-modality concordance and discordance into interpretable
+  regulatory states with artifact risk assessment.
+keywords:
+  - multi-omics
+  - regulatory genomics
+  - single-cell
+  - chromatin
+  - transcriptomics
+  - epigenomics
+license: MIT
+version: 0.1.0-alpha
+date-released: '2026-05-14'

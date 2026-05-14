@@ -19,4 +19,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: pip install -r requirements-dev.txt
       - run: pip install -e .
-      - run: python -m pytest -q
+      - run: python -m pytest -q --cov=modes --cov-report=term-missing
