@@ -329,19 +329,67 @@ class MoDEData:
 
     # -- Methods --
 
-    def validate(self) -> List[str]:
+    def validate(self, condition_col: str = None) -> List[str]:
         """Check data integrity. Returns list of issues found."""
         issues = []
+        # Sample count
         if self.n_samples < 3:
             issues.append("Fewer than 3 samples")
+        if self.n_samples < 8:
+            issues.append(
+                f"Only {self.n_samples} samples; >=8 recommended for reliable "
+                "variance estimation"
+            )
+        # Index alignment
+        if not self.rna.index.equals(self.atac.index):
+            issues.append("RNA and ATAC sample indices differ")
+        if not self.rna.index.equals(self.obs.index):
+            issues.append("RNA and metadata sample indices differ")
+        # Duplicate IDs
+        if len(self.rna.columns) != len(set(self.rna.columns)):
+            issues.append("Duplicate gene names in RNA matrix")
+        if len(self.atac.columns) != len(set(self.atac.columns)):
+            issues.append("Duplicate peak IDs in ATAC matrix")
+        if len(self.rna.index) != len(set(self.rna.index)):
+            issues.append("Duplicate sample IDs in RNA matrix")
+        # Missing values
         if self.rna.isnull().any().any():
             issues.append("RNA matrix contains NaN values")
         if self.atac.isnull().any().any():
             issues.append("ATAC matrix contains NaN values")
+        if self.obs.isnull().any().any():
+            issues.append("Metadata contains NaN values")
+        # Negative / non-integer
         if (self.rna.values < 0).any():
             issues.append("RNA matrix contains negative values")
         if (self.atac.values < 0).any():
             issues.append("ATAC matrix contains negative values")
+        # Library size
+        rna_sum = self.rna.sum(axis=1)
+        atac_sum = self.atac.sum(axis=1)
+        if (rna_sum <= 0).any():
+            bad = list(self.rna.index[rna_sum <= 0])
+            issues.append(f"Samples with zero RNA library size: {bad}")
+        if (atac_sum <= 0).any():
+            bad = list(self.atac.index[atac_sum <= 0])
+            issues.append(f"Samples with zero ATAC library size: {bad}")
+        # Infinite values
+        if np.isinf(self.rna.values).any():
+            issues.append("RNA matrix contains infinite values")
+        if np.isinf(self.atac.values).any():
+            issues.append("ATAC matrix contains infinite values")
+        # Condition column
+        if condition_col is not None:
+            if condition_col not in self.obs.columns:
+                issues.append(f"Condition column '{condition_col}' not in metadata")
+            else:
+                cond = self.obs[condition_col]
+                n_cats = len(set(cond.dropna()))
+                if n_cats != 2:
+                    issues.append(
+                        f"Condition '{condition_col}' has {n_cats} unique values; "
+                        "binary (2) is required"
+                    )
         return issues
 
     def filter_features(

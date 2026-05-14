@@ -1,0 +1,5 @@
+feature_id	modality	model_used	family	alpha	alpha_estimated	converged	dropped_covariates	warning
+chr1:100-200	ATAC	nb_default_alpha	negative_binomial		False	True	False	
+chr2:300-400	ATAC	nb_default_alpha	negative_binomial		False	True	False	
+STAT1	RNA	nb_default_alpha	negative_binomial		False	True	False	
+GZMB	RNA	nb_default_alpha	negative_binomial		False	True	False	
