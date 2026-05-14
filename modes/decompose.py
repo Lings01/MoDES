@@ -37,11 +37,13 @@ class ConditionalDecomposition:
         covariate_cols: Optional[List[str]] = None,
         donor_col: Optional[str] = None,
         batch_col: Optional[str] = None,
+        contrast: Optional[tuple] = None,
     ):
         self.condition_col = condition_col
         self.covariate_cols = covariate_cols or []
         self.donor_col = donor_col
         self.batch_col = batch_col
+        self.contrast = contrast
 
     def decompose(
         self,
@@ -241,7 +243,12 @@ class ConditionalDecomposition:
                     "MoDES v0.1 supports only binary condition. "
                     "Please run pairwise contrasts or implement a contrast matrix."
                 )
-            cond_col = (cond == categories[1]).astype(float)
+            if self.contrast is not None:
+                ref_label, tgt_label = self.contrast[0], self.contrast[1]
+            else:
+                ref_label = categories[0]
+                tgt_label = categories[1]
+            cond_col = (cond == tgt_label).astype(float)
 
         X_cols = [np.ones(n), cond_col]
 

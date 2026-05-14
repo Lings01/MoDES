@@ -38,12 +38,18 @@ class EffectEstimator:
         donor_col: Optional[str] = None,
         batch_col: Optional[str] = None,
         use_empirical_bayes: bool = True,
+        contrast: Optional[tuple] = None,
+        allow_poisson_fallback: bool = True,
+        allow_simplified_fallback: bool = False,
     ):
         self.condition_col = condition_col
         self.covariate_cols = covariate_cols or []
         self.donor_col = donor_col
         self.batch_col = batch_col
         self.use_empirical_bayes = use_empirical_bayes
+        self.contrast = contrast
+        self.allow_poisson_fallback = allow_poisson_fallback
+        self.allow_simplified_fallback = allow_simplified_fallback
 
     def estimate_atac_effects(
         self,
@@ -161,19 +167,32 @@ class EffectEstimator:
         cond = obs[self.condition_col].values
         if np.issubdtype(cond.dtype, np.number):
             cond_col = cond.astype(float)
+            ref_label = "0"
+            tgt_label = "1"
         else:
-            # Categorical: create dummy with first category as reference
             categories = sorted(set(cond))
             if len(categories) != 2:
                 raise NotImplementedError(
                     "MoDES v0.1 supports only binary condition. "
                     "Please run pairwise contrasts or implement a contrast matrix."
                 )
-            cond_col = (cond == categories[1]).astype(float)
+            # Determine reference and target levels
+            if self.contrast is not None:
+                ref_label, tgt_label = self.contrast[0], self.contrast[1]
+                if ref_label not in categories or tgt_label not in categories:
+                    raise ValueError(
+                        f"Contrast levels {self.contrast} not found in condition. "
+                        f"Available: {categories}"
+                    )
+            else:
+                ref_label = categories[0]
+                tgt_label = categories[1]
+            cond_col = (cond == tgt_label).astype(float)
 
         # Start with intercept + condition
         X_cols = [np.ones(n), cond_col]
-        col_names = ["intercept", self.condition_col]
+        contrast_label = f"{self.condition_col}[{tgt_label}_vs_{ref_label}]"
+        col_names = ["intercept", contrast_label]
 
         # Covariates
         for cov in self.covariate_cols:
@@ -224,7 +243,11 @@ class EffectEstimator:
         feature_name: str = "",
     ) -> ModalityEffect:
         """Fit NB GLM for a single feature."""
-        result = _safe_fit_nb_glm(y, X, offset)
+        result = _safe_fit_nb_glm(
+            y, X, offset,
+            allow_poisson=self.allow_poisson_fallback,
+            allow_simplified=self.allow_simplified_fallback,
+        )
 
         def _build_summary(res) -> dict:
             """Extract model diagnostics from result."""
@@ -330,7 +353,11 @@ class EffectEstimator:
 
 
 def _safe_fit_nb_glm(
-    y: np.ndarray, X: np.ndarray, offset: np.ndarray = None
+    y: np.ndarray,
+    X: np.ndarray,
+    offset: np.ndarray = None,
+    allow_poisson: bool = True,
+    allow_simplified: bool = False,
 ) -> Optional[Any]:
     """
     Fit NB GLM with fallback handling.
@@ -385,30 +412,34 @@ def _safe_fit_nb_glm(
             result2._modes_dropped_covariates = False
             return result2
 
-        # Fallback 2: Poisson
-        model3 = sm.GLM(
-            endog=y,
-            exog=X,
-            offset=offset_adj,
-            family=sm.families.Poisson(),
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            result3 = model3.fit(maxiter=200, disp=0)
-        result3._modes_model_used = "poisson_fallback"
-        result3._modes_family = "poisson"
-        result3._modes_alpha = None
-        result3._modes_alpha_estimated = False
-        result3._modes_dropped_covariates = False
-        if not getattr(result3, "converged", False):
-            result3._modes_warning = (
-                "Poisson fallback did not converge; "
-                "coefficients are returned with caution."
+        # Fallback 2: Poisson (if allowed)
+        if allow_poisson:
+            model3 = sm.GLM(
+                endog=y,
+                exog=X,
+                offset=offset_adj,
+                family=sm.families.Poisson(),
             )
-        return result3
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                result3 = model3.fit(maxiter=200, disp=0)
+            result3._modes_model_used = "poisson_fallback"
+            result3._modes_family = "poisson"
+            result3._modes_alpha = None
+            result3._modes_alpha_estimated = False
+            result3._modes_dropped_covariates = False
+            if not getattr(result3, "converged", False):
+                result3._modes_warning = (
+                    "Poisson fallback did not converge; "
+                    "coefficients are returned with caution."
+                )
+            return result3
+        return None
 
     except Exception as e:
-        # Final fallback: simplified model (intercept + condition only)
+        # Final fallback: simplified model (if allowed)
+        if not allow_simplified:
+            return None
         try:
             import statsmodels.api as sm
 

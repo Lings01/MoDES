@@ -70,6 +70,9 @@ class MoDES:
         external_links: Optional[pd.DataFrame] = None,
         motif_annotation: Optional[pd.DataFrame] = None,
         tss_map: Optional[Dict] = None,
+        contrast: Optional[tuple] = None,
+        allow_poisson_fallback: bool = True,
+        allow_simplified_fallback: bool = False,
     ):
         self.data = data
         self.condition_col = condition_col
@@ -81,6 +84,9 @@ class MoDES:
         self.external_links = external_links
         self.motif_annotation = motif_annotation
         self.tss_map = tss_map
+        self.contrast = contrast
+        self.allow_poisson_fallback = allow_poisson_fallback
+        self.allow_simplified_fallback = allow_simplified_fallback
 
         # Pipeline state
         self.events: Optional[pd.DataFrame] = None
@@ -160,6 +166,9 @@ class MoDES:
             donor_col=self.donor_col,
             batch_col=self.batch_col,
             use_empirical_bayes=True,
+            contrast=self.contrast,
+            allow_poisson_fallback=self.allow_poisson_fallback,
+            allow_simplified_fallback=self.allow_simplified_fallback,
         )
 
         peak_names = list(self.events["peak_id"].unique())
@@ -186,6 +195,7 @@ class MoDES:
             covariate_cols=self.covariate_cols,
             donor_col=self.donor_col,
             batch_col=self.batch_col,
+            contrast=self.contrast,
         )
 
         self.conditional_effects = decomposer.decompose(
