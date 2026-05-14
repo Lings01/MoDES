@@ -542,7 +542,7 @@ class MoDESResult:
         max_artifact_risk : str, optional
             Maximum allowed artifact risk ("low" < "medium" < "high").
         max_event_fdr : float, optional
-            Minimum event-level FDR threshold.
+            Maximum event-level FDR threshold. Events with event_fdr <= this are kept.
 
         Returns
         -------

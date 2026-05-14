@@ -81,7 +81,7 @@ class EffectEstimator:
         fdrs = benjamini_hochberg(pvals)
         for (key, e), fdr in zip(effects.items(), fdrs):
             e.fdr = float(fdr)
-            e.direction = int(np.sign(e.coef)) if e.fdr < 0.1 else 0
+            e.direction = int(np.sign(e.coef)) if np.isfinite(e.coef) and e.coef != 0 else 0
 
         # EB moderation
         if self.use_empirical_bayes:
@@ -124,7 +124,7 @@ class EffectEstimator:
         fdrs = benjamini_hochberg(pvals)
         for (key, e), fdr in zip(effects.items(), fdrs):
             e.fdr = float(fdr)
-            e.direction = int(np.sign(e.coef)) if e.fdr < 0.1 else 0
+            e.direction = int(np.sign(e.coef)) if np.isfinite(e.coef) and e.coef != 0 else 0
 
         # EB moderation
         if self.use_empirical_bayes:
@@ -311,7 +311,7 @@ class EffectEstimator:
         for key, fdr in zip(keys, fdrs):
             effects[key].fdr = float(fdr)
             e = effects[key]
-            e.direction = int(np.sign(e.coef)) if e.fdr < 0.1 else 0
+            e.direction = int(np.sign(e.coef)) if np.isfinite(e.coef) and e.coef != 0 else 0
 
         return effects
 
