@@ -322,3 +322,42 @@ def _peak_tss_distance(peak_start: int, peak_end: int, tss_pos: int) -> int:
     """Distance from peak center to TSS. Negative = peak upstream of TSS."""
     peak_center = (peak_start + peak_end) // 2
     return peak_center - tss_pos
+
+
+def validate_external_links(links: pd.DataFrame, peak_names: set, gene_names: set) -> List[str]:
+    """
+    Validate an external_links DataFrame.
+
+    Returns a list of issue strings. Empty list means valid.
+    """
+    issues = []
+    required = ["peak_id", "gene"]
+    for col in required:
+        if col not in links.columns:
+            issues.append(f"Missing required column: {col}")
+    if issues:
+        return issues
+
+    n_total = len(links)
+    n_peak_match = links["peak_id"].isin(peak_names).sum()
+    n_gene_match = links["gene"].isin(gene_names).sum()
+    if n_peak_match < n_total:
+        issues.append(
+            f"Only {n_peak_match}/{n_total} peak_ids found in ATAC matrix"
+        )
+    if n_gene_match < n_total:
+        issues.append(
+            f"Only {n_gene_match}/{n_total} genes found in RNA matrix"
+        )
+
+    dupes = links.duplicated(subset=["peak_id", "gene"]).sum()
+    if dupes > 0:
+        issues.append(f"{dupes} duplicate peak_id-gene pairs found")
+
+    if "score" in links.columns:
+        bad_scores = ((links["score"] < 0) | (links["score"] > 1)).sum()
+        if bad_scores > 0:
+            issues.append(f"{bad_scores} scores outside [0, 1] range")
+
+    return issues
+    return peak_center - tss_pos

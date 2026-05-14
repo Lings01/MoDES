@@ -277,10 +277,16 @@ class ConditionalDecomposition:
         # Rank check
         rank = np.linalg.matrix_rank(X)
         if rank < X.shape[1]:
-            raise ValueError(
+            msg = (
                 f"Design matrix is rank deficient: rank={rank}, "
-                f"n_cols={X.shape[1]}. "
-                "Check confounding among condition, donor, batch, and covariates."
+                f"n_cols={X.shape[1]}.\n"
+                "Possible causes:\n"
+                "  - condition fully confounded with donor\n"
+                "  - condition fully confounded with batch\n"
+                "  - too many covariates for the sample size\n"
+                "  - donor appears in only one condition\n"
+                "Ensure each donor/batch has observations in both conditions."
             )
+            raise ValueError(msg)
 
         return X

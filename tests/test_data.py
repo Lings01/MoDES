@@ -169,3 +169,20 @@ def test_cpm_normalization_rejects_zero_library(synthetic_bulk_data):
     import pytest
     with pytest.raises(ValueError):
         data.normalize_library_size(method="cpm")
+
+
+def test_validate_finds_duplicate_genes(synthetic_bulk_data):
+    data, _, _ = synthetic_bulk_data
+    cols = list(data.rna.columns)
+    cols[1] = cols[0]
+    data.rna.columns = cols
+    issues = data.validate()
+    assert any("Duplicate gene" in i for i in issues)
+
+
+def test_validate_finds_condition_binary(synthetic_bulk_data_small):
+    data, _, _ = synthetic_bulk_data_small
+    n = data.n_samples
+    data.obs["condition"] = ["A", "B", "C"] * (n // 3) + ["A"] * (n % 3)
+    issues = data.validate(condition_col="condition")
+    assert any("binary" in i.lower() for i in issues)
