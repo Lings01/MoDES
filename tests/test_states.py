@@ -168,3 +168,24 @@ def test_artifact_risk_low_medium_high():
     assert states.loc[1, "artifact_risk"] == "medium"
     # quality=0.1 < 0.3: low_quality_score, so medium (no single_modality since both non-sig)
     assert states.loc[2, "artifact_risk"] == "medium"
+
+
+def test_rule_based_core_states_exact():
+    """Direct evidence-to-state test: state rules correct without GLM noise."""
+    evidence = pd.DataFrame({
+        "event_id": ["e_conc", "e_primed", "e_rna", "e_null"],
+        "z_atac": [5.0, 5.0, 0.1, 0.1],
+        "z_rna": [4.0, 0.1, 4.5, 0.1],
+        "z_rna_given_atac": [0.2, 0.1, 4.0, 0.1],
+        "atac_fdr": [1e-6, 1e-6, 1.0, 1.0],
+        "rna_fdr": [1e-6, 1.0, 1e-6, 1.0],
+        "atac_direction": [1, 1, 0, 0],
+        "rna_direction": [1, 0, 1, 0],
+        "quality_score": [1.0, 1.0, 1.0, 1.0],
+    })
+    clf = StateClassifier(fdr_threshold=0.1, use_empirical_bayes=False)
+    states = clf.classify(evidence).set_index("event_id")
+    assert states.loc["e_conc", "state"] == "concordant"
+    assert states.loc["e_primed", "state"] == "chromatin_primed"
+    assert states.loc["e_rna", "state"] == "rna_only"
+    assert states.loc["e_null", "state"] == "null"

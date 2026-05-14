@@ -11,10 +11,16 @@ def _build_known_data():
     """
     Build deterministic data with precisely controlled ground truth.
 
+    Design: null features use fixed baseline + symmetric Normal(0,sigma) noise
+    so that E[ctrl] = E[trt] by construction. Signal features use large
+    multiplicative fold changes for reliable detection even at small n.
+
     Returns MoDEData, ground truth DataFrame, and tss_map.
     """
     from modes.data import MoDEData
+    import numpy as np
 
+    # Only 4 genes/peaks with coordinates → only 4 real events
     gene_names = [
         "g_concordant:chr1:500000",
         "g_primed:chr2:500000",
@@ -27,56 +33,86 @@ def _build_known_data():
         "chr3:499000-501000",
         "chr4:499000-501000",
     ]
+    # Filler genes/peaks to balance library sizes (no coordinates → no events)
+    n_filler = 100
+    filler_genes = [f"filler_gene_{i}" for i in range(n_filler)]
+    filler_peaks = [f"filler_peak_{i}" for i in range(n_filler)]
+    all_gene_names = gene_names + filler_genes
+    all_peak_names = peak_names + filler_peaks
 
-    # Randomly assign null feature values to guarantee H0 is true by construction.
-    # Signal features use 10x fold changes for reliable detection.
-    # 16 ctrl + 16 trt = 32 samples.
-    n = 16
+    # 10 ctrl + 10 trt = 20 samples. Enough power for 30x signal, low power for null.
+    n = 10
     n_total = n * 2
     condition = np.array(["ctrl"] * n + ["trt"] * n)
+
+    rng = np.random.default_rng(42)
+
+    # For null modalities: trt uses the SAME n values as ctrl (reversed order).
+    # This guarantees identical group means → coef=0, SE>0, p≈1.0.
+    atac_null_ctrl = rng.poisson(200, n).astype(float)
+    rna_null_ctrl = rng.poisson(300, n).astype(float)
+    atac_null_trt = atac_null_ctrl[::-1].copy()  # same multiset, reversed
+    rna_null_trt = rna_null_ctrl[::-1].copy()
 
     atac = np.zeros((n_total, 4), dtype=float)
     rna = np.zeros((n_total, 4), dtype=float)
 
-    rng = np.random.default_rng(42)
+    # rna_only ATAC null: identical multisets → p=1.0
+    atac[:n, 2] = atac_null_ctrl
+    atac[n:, 2] = atac_null_trt
+    # primed RNA null: identical multisets → p=1.0
+    rna[:n, 1] = rna_null_ctrl
+    rna[n:, 1] = rna_null_trt
+    # null state: both modalities null (independent Poisson, will be non-sig with small n)
+    atac[:, 3] = rng.poisson(200, n_total).astype(float)
+    rna[:, 3] = rng.poisson(300, n_total).astype(float)
 
-    # Generate null distributions all at once, then randomly assign
-    null_atac_baseline = rng.poisson(200, n_total * 2).reshape(n_total, 2)
-    null_rna_baseline = rng.poisson(300, n_total * 2).reshape(n_total, 2)
-    # Shuffle to randomize assignment
-    rng.shuffle(null_atac_baseline)
-    rng.shuffle(null_rna_baseline)
+    # --- Signal modalities: 30x fold change in trt ---
+    # Add filler columns to balance library sizes between ctrl and trt.
+    # Without balancing, trt's signal genes inflate library size offsets,
+    # causing spurious significance in null genes.
+    # Use n_filler defined above to balance library sizes
+    atac_full = np.zeros((n_total, 4 + n_filler), dtype=float)
+    rna_full = np.zeros((n_total, 4 + n_filler), dtype=float)
 
-    # Primed uses col 0 of null data; rna_only uses col 1; null uses both
-    # Assign randomly shuffled null values
-    for row_idx in range(n_total):
-        atac[row_idx, 2] = null_atac_baseline[row_idx, 0]  # rna_only ATAC null
-        atac[row_idx, 3] = null_atac_baseline[row_idx, 1]  # null ATAC null
-        rna[row_idx, 1] = null_rna_baseline[row_idx, 0]    # primed RNA null
-        rna[row_idx, 3] = null_rna_baseline[row_idx, 1]    # null RNA null
+    # Filler: identical null values for all samples (dominates library size)
+    for fi in range(n_filler):
+        rna_full[:, 4 + fi] = rng.poisson(500, n_total)
+        atac_full[:, 4 + fi] = rng.poisson(400, n_total)
 
-    # Concordant (col 0): ATAC↑ RNA↑ only for trt
-    atac[:n, 0] = rng.poisson(200, n)
-    rna[:n, 0] = rng.poisson(300, n)
-    atac[n:, 0] = rng.poisson(2000, n)
-    rna[n:, 0] = rng.poisson(3000, n)
+    # Concordant (col 0): ATAC↑ RNA↑
+    atac_full[:n, 0] = rng.poisson(100, n)
+    rna_full[:n, 0] = rng.poisson(150, n)
+    atac_full[n:, 0] = rng.poisson(3000, n)
+    rna_full[n:, 0] = rng.poisson(4500, n)
 
-    # Primed (col 1): ATAC↑ only for trt, RNA from null pool
-    atac[:n, 1] = rng.poisson(200, n)
-    atac[n:, 1] = rng.poisson(2000, n)
+    # Primed (col 1): ATAC↑ (30x), RNA null
+    atac_full[:n, 1] = rng.poisson(100, n)
+    atac_full[n:, 1] = rng.poisson(3000, n)
 
-    # RNA_only (col 2): RNA↑ only for trt, ATAC from null pool
-    rna[:n, 2] = rng.poisson(300, n)
-    rna[n:, 2] = rng.poisson(3000, n)
+    # RNA_only (col 2): RNA↑ (30x), ATAC null
+    rna_full[:n, 2] = rng.poisson(150, n)
+    rna_full[n:, 2] = rng.poisson(4500, n)
+
+    # Copy null modalities into full arrays
+    atac_full[:n, 2] = atac_null_ctrl   # rna_only ATAC null
+    atac_full[n:, 2] = atac_null_trt
+    rna_full[:n, 1] = rna_null_ctrl     # primed RNA null
+    rna_full[n:, 1] = rna_null_trt
+    atac_full[:, 3] = rng.poisson(200, n_total).astype(float)  # null ATAC
+    rna_full[:, 3] = rng.poisson(300, n_total).astype(float)   # null RNA
+
+    atac = atac_full
+    rna = rna_full
 
     true_states = ["concordant", "chromatin_primed", "rna_only", "null"]
 
     obs = pd.DataFrame({
         "condition": condition,
-    }, index=[f"s{i}" for i in range(n * 2)])
+    }, index=[f"s{i}" for i in range(n_total)])
 
-    rna_df = pd.DataFrame(rna, index=obs.index, columns=gene_names)
-    atac_df = pd.DataFrame(atac, index=obs.index, columns=peak_names)
+    rna_df = pd.DataFrame(rna, index=obs.index, columns=all_gene_names)
+    atac_df = pd.DataFrame(atac, index=obs.index, columns=all_peak_names)
 
     gt = pd.DataFrame({
         "gene": gene_names,
@@ -103,7 +139,7 @@ class TestIntegration:
             data=data,
             tss_map=tss_map,
             condition_col="condition",
-            fdr_threshold=0.5,
+            fdr_threshold=0.1,
         )
         result = modes.run()
 
@@ -136,18 +172,14 @@ class TestIntegration:
         primed_mask = rec_df["true_state"] == "chromatin_primed"
         assert primed_mask.sum() == 1
         primed_state = rec_df.loc[primed_mask, "predicted_state"].iloc[0]
-        # With count data and NB GLM, null features may show small but
-        # statistically significant group differences at moderate sample sizes.
-        # Primed = ATAC↑ with RNA null. Accept any ATAC-driven state.
-        assert primed_state in {"chromatin_primed", "concordant", "discordant_opposite"}, \
-            f"Expected ATAC-driven state, got {primed_state}"
+        assert primed_state == "chromatin_primed", \
+            f"Expected chromatin_primed, got {primed_state}"
 
         rna_mask = rec_df["true_state"] == "rna_only"
         assert rna_mask.sum() == 1
         rna_state = rec_df.loc[rna_mask, "predicted_state"].iloc[0]
-        # RNA_only = RNA↑ with ATAC null. Accept any RNA-driven state.
-        assert rna_state in {"rna_only", "concordant", "discordant_opposite"}, \
-            f"Expected RNA-driven state, got {rna_state}"
+        assert rna_state == "rna_only", \
+            f"Expected rna_only, got {rna_state}"
 
     def test_full_pipeline_outputs(self, synthetic_bulk_data_small):
         """All output files are generated correctly."""

@@ -1,35 +1,44 @@
 # MoDES: Multi-Omics Discordance/Event State inference
 
-多组学不一致驱动的调控事件状态推断框架。
+Multi-omics discordance-guided decomposition of regulatory event states.
 
-## 概述
+## Overview
 
-MoDES 是一个以 **regulatory event** 为基本分析单位的统计框架。与传统的多组学整合方法不同，MoDES 将跨组学层之间的一致与不一致作为主要信号，系统地将每个调控事件分类为可解释的状态。
+MoDES is a statistical framework that treats regulatory events — not genes, peaks, or
+clusters — as the primary unit of analysis. Instead of compressing multi-omics layers
+into a single embedding, MoDES uses cross-modality concordance and discordance to
+classify each event into an interpretable regulatory state.
 
-MoDES 输出两层信息：
-1. **biological state**: concordant, chromatin_primed, rna_only, discordant_opposite, null
-2. **artifact_risk**: low, medium, high
+MoDES reports two layers of information:
 
-当前版本 (v0.1.0) 为 **MoDES-RA**（RNA + ATAC）。
+1. **biological state**: `concordant`, `chromatin_primed`, `rna_only`,
+   `discordant_opposite`, `null`
+2. **artifact risk**: `low`, `medium`, `high`
 
-## Current scope of v0.1.0
+The current release is **MoDES-RA v0.1.0-alpha** (RNA + ATAC).
 
+## Current status
+
+MoDES-RA is an alpha-stage RNA+ATAC bulk/pseudobulk prototype.
+
+Current scope:
 - RNA + ATAC only
-- binary condition only (two-group comparison)
+- binary condition only
 - bulk or externally generated pseudobulk recommended
-- event candidates require genome_annotation, tss_map, or external_links
-- no native protein model yet
-- no native spatial graph model yet
+- event candidates require `external_links`, `genome_annotation`, or `tss_map`
+- native protein model is planned
+- native spatial graph model is planned
 
-## 安装
+## Installation
 
 ```bash
 pip install -e .
+pip install -r requirements-dev.txt  # for running tests
 ```
 
-## 快速开始
+## Quick start
 
-### 方案 A：使用 external peak-gene links（推荐）
+### Option A: external peak-gene links (recommended)
 
 ```python
 import pandas as pd
@@ -40,6 +49,7 @@ data = MoDEData.from_matrices(
     atac_counts="atac_peaks.tsv",
     metadata="sample_metadata.tsv",
     condition_col="condition",
+    index_col=0,
 )
 
 links = pd.read_csv("peak_gene_links.tsv", sep="\t")
@@ -51,7 +61,7 @@ modes = MoDES(
 result = modes.run()
 ```
 
-### 方案 B：使用 GTF genome annotation
+### Option B: GTF genome annotation
 
 ```python
 modes = MoDES(
@@ -62,7 +72,7 @@ modes = MoDES(
 result = modes.run()
 ```
 
-### 查看和导出结果
+### View and export results
 
 ```python
 print(result.summary())
@@ -71,52 +81,76 @@ result.to_graphml("output/event_network.graphml")
 result.to_report("output/report.html")
 ```
 
-### 输出文件
+### Minimal example
 
-| 文件 | 说明 |
-|------|------|
-| event_table.tsv | 主输出表 |
-| event_state_confidence.tsv | 状态置信度 |
-| event_layer_effects.tsv | 每层效应大小 |
-| event_evidence_vectors.tsv | 证据向量 |
-| model_diagnostics.tsv | 模型诊断信息（当前仅包含 marginal ATAC/RNA GLM 诊断，条件分解诊断待后续版本） |
-| run_params.tsv | 运行参数 |
+```bash
+python examples/minimal_bulk/run_minimal.py
+```
 
-#### event_table.tsv 字段
+## Algorithm
 
-| 字段 | 说明 |
-|------|------|
-| event_id | 事件唯一标识 |
-| gene | target gene |
-| peak_id | regulatory peak |
-| state | biological state (concordant / chromatin_primed / rna_only / discordant_opposite / null) |
-| state_confidence | 状态置信度 [0, 1] |
-| artifact_risk | 技术伪影风险 (low / medium / high)，不是生物状态 |
-| artifact_reason | 伪影原因（分号分隔） |
-| event_pval | event-level p-value |
-| event_fdr | event-level BH-corrected FDR |
-| atac_coef / atac_pval / atac_fdr | ATAC 效应估计 |
-| rna_coef / rna_pval / rna_fdr | RNA 效应估计 |
-| rna_after_atac_coef / rna_after_atac_pval / rna_after_atac_fdr | 控制 linked ATAC peak 后的条件效应 |
+1. **Event Candidate Construction** — link peaks to target genes via proximity,
+   external links, or motif annotation
+2. **Effect Size Estimation** — NB GLM with empirical Bayes variance moderation
+   for ATAC and RNA condition effects
+3. **Conditional Decomposition** — RNA condition effect after adjustment for the
+   linked ATAC peak
+4. **Evidence Vector Construction** — `D_e = [z_ATAC, z_RNA, z_RNA|ATAC, quality]`
+5. **State Classification** — rule-based initialization followed by empirical
+   Bayes confidence refinement
 
-## 算法流程
+## Input formats
 
-1. **Event Candidate Construction** — 将 peaks 链接到 target genes
-2. **Effect Size Estimation** — NB GLM + 经验贝叶斯收缩估计每个模态的 condition effect
-3. **Conditional Decomposition** — RNA condition effect after adjustment for the linked ATAC peak
-4. **Evidence Vector Construction** — 构造 D_e = [z_ATAC, z_RNA, z_RNA|ATAC, q]
-5. **State Classification** — 规则判别 + 经验贝叶斯置信度计算
+- **Bulk**: TSV/CSV count matrices + metadata (recommended)
+- **Single-cell**: experimental in v0.1.0. Aggregate externally to pseudobulk
+  first, then load with `MoDEData.from_matrices()`.
+  `MoDEData.from_pseudobulk()` supports simple AnnData objects.
+- **Spatial**: planned. v0.1.0 does not model spatial coordinates or
+  neighborhood graphs.
 
-## 输入格式
+## Output files
 
-- **Bulk**: TSV/CSV count matrices + metadata（推荐）
-- **Single-cell**: experimental in v0.1.0. 推荐先外部聚合为 pseudobulk，再用 `MoDEData.from_matrices()` 加载。`MoDEData.from_pseudobulk()` 支持简单 AnnData（RNA in X, ATAC in obsm["atac"]）
-- **Spatial**: planned. Current v0.1.0 does not yet model spatial coordinates or neighborhood graphs.
+| File | Description |
+|---|---|
+| `event_table.tsv` | Main output: one row per peak-gene regulatory event |
+| `event_state_confidence.tsv` | State, state_confidence, artifact_risk per event |
+| `event_layer_effects.tsv` | ATAC/RNA layer effect estimates |
+| `event_evidence_vectors.tsv` | Evidence vectors used for state classification |
+| `model_diagnostics.tsv` | Marginal ATAC/RNA GLM diagnostics (conditional model diagnostics planned) |
+| `run_params.tsv` | Run parameters and data summary |
+| `event_network.graphml` | Optional: TF-peak-gene network |
+| `report.html` | Optional: HTML report |
 
-## 引用
+### `event_table.tsv` fields
+
+| Field | Description |
+|---|---|
+| `event_id` | Unique event identifier |
+| `tf_name` | Optional TF annotation |
+| `peak_id` | ATAC peak |
+| `gene` | Target gene |
+| `state` | Biological event state |
+| `state_confidence` | State confidence, range 0 to 1 |
+| `artifact_risk` | Technical risk flag: `low` / `medium` / `high` |
+| `artifact_reason` | Semicolon-separated risk reasons |
+| `event_pval` | Event-level p-value |
+| `event_fdr` | Event-level BH-adjusted FDR |
+| `atac_coef` | Condition effect on ATAC peak |
+| `atac_pval` / `atac_fdr` | ATAC layer significance |
+| `rna_coef` | Condition effect on RNA gene |
+| `rna_pval` / `rna_fdr` | RNA layer significance |
+| `rna_after_atac_coef` | RNA condition effect after linked-peak adjustment |
+| `rna_after_atac_pval` / `rna_after_atac_fdr` | Conditional decomposition significance |
+| `quality_score` | Event quality score |
+
+> `model_diagnostics.tsv` currently reports marginal ATAC and RNA GLM diagnostics.
+> Conditional RNA-after-ATAC diagnostics are summarized in `event_table.tsv`;
+> full conditional diagnostics will be added in a future version.
+
+## Citation
 
 MoDES: Multi-Omics Discordance-guided decomposition of regulatory event states.
 
-## 许可证
+## License
 
 MIT
