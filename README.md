@@ -1,118 +1,122 @@
 # MoDES: Multi-Omics Discordance/Event State inference
 
-**多组学不一致驱动的调控事件状态推断框架**
-
-MoDES 是一个以 **regulatory event**（调控事件）为基本分析单位的统计框架。不同于传统的多组学整合方法，MoDES
-将跨组学层之间的一致与不一致作为主要信号，系统地将每个调控事件分类为可解释的生物学状态，
-并同时评估其技术伪影风险。
+A statistical framework that treats regulatory events — not genes, peaks, or clusters —
+as the primary unit of analysis. Instead of compressing multi-omics layers into a single
+embedding, MoDES uses cross-modality concordance and discordance to classify each event
+into an interpretable regulatory state with artifact risk assessment.
 
 ---
 
-## 1. 基本原理
+## 1. Principles
 
-### 1.1 核心思想
+### 1.1 Core Idea
 
-传统多组学分析通常将 RNA、ATAC、Protein 等模态分别做差异分析，然后交叉验证 —
-"RNA 找到了差异基因，ATAC 看看附近 peak 是否开放"。这种逻辑隐式地把一个模态当作主分析，
-另一个模态当作验证层。
+Traditional multi-omics analysis typically performs differential analysis on each modality
+separately and then cross-validates — "RNA found DEGs, let's check if nearby peaks are
+open." This implicitly treats one modality as primary and others as validation layers.
 
-MoDES 的逻辑不同：
+MoDES takes a different approach:
 
-> **RNA、ATAC、protein 不是主次关系；它们是同一个调控事件的不同观测层。**
+> **RNA, ATAC, and protein are not primary vs. secondary layers; they are different
+> observation layers of the same regulatory event.**
 
-- **一致性**（concordance）说明完整调控链条激活：chromatin → transcription → protein
-- **ATAC-only**（chromatin priming）说明染色质层已就绪，但转录/蛋白层尚未响应
-- **RNA-only**（trans-driven）说明 RNA 变化不由局部染色质解释，可能来自 trans 调控、RNA stability 等
-- **RNA-protein 不一致**说明 post-transcriptional buffering、protein memory 或技术问题
-- **空间局部一致**说明 niche-driven regulation
+- **Concordance** — complete regulatory chain activation: chromatin → transcription → protein
+- **ATAC-only** (chromatin priming) — chromatin is open but transcription has not started
+- **RNA-only** (trans-driven) — RNA change is not explained by local chromatin, possibly
+  from trans regulation, RNA stability changes, or unmeasured regulatory layers
+- **RNA-protein discordance** — post-transcriptional buffering, protein memory, or
+  technical artifacts
+- **Spatial local concordance** — niche-driven regulation
 
-这种视角的本质提升在于 **数据利用率**：不是把多组学数据压缩成一个 embedding，而是利用
-不同组学层之间的不一致模式来推断调控事件的发生层级。
+The fundamental improvement is in **data utilization**: rather than compressing multi-omics
+into an embedding, MoDES uses discordance patterns between layers to infer *at which layer*
+a regulatory event occurs.
 
-### 1.2 分析单位：regulatory event，不是 gene
+### 1.2 Unit of Analysis: the Regulatory Event, not the Gene
 
-一个 regulatory event 定义为：
+A regulatory event is defined as:
 
 ```
 e = (TF, enhancer/peak, target_gene, context)
 ```
 
-例如：
+For example:
 
 > **STAT1 motif / enhancer chr1:100-200 accessibility ↑**
 > → **IFIT3 RNA ↑**
-> → 发生在 **disease monocyte** 中
+> → occurring in **disease monocytes**
 
-这比 "gene-level differential expression" 或 "peak-level differential accessibility" 更接近
-真实的调控生物学。
+This is closer to real regulatory biology than gene-level differential expression or
+peak-level differential accessibility alone.
 
-### 1.3 生物学状态分类
+### 1.3 Biological State Classification
 
-MoDES-RA v0.1.0 基于 RNA + ATAC 两层数据，将每个事件分类为以下生物学状态：
+MoDES-RA v0.1.0 (RNA + ATAC) classifies each event into one of five biological states:
 
-| 状态 | 模式 | 生物学解释 |
+| State | Pattern | Biological Interpretation |
 |---|---|---|
-| `concordant` | ATAC↑ RNA↑ | 局部染色质开放驱动转录激活（完整顺式调控链） |
-| `chromatin_primed` | ATAC↑ RNA→ | 染色质已就绪，转录尚未启动（epigenetic priming） |
-| `rna_only` | ATAC→ RNA↑ | RNA 变化不由局部 chromatin 解释（trans 调控 / RNA stability / 未测调控层） |
-| `discordant_opposite` | ATAC↑ RNA↓ 或 ATAC↓ RNA↑ | 两层方向相反，可能是复杂调控或技术问题 |
-| `null` | ATAC→ RNA→ | 该事件在当前条件下没有显著变化 |
+| `concordant` | ATAC↑ RNA↑ | Local chromatin opening drives transcriptional activation (intact cis-regulatory chain) |
+| `chromatin_primed` | ATAC↑ RNA→ | Chromatin is open but transcription has not started (epigenetic priming) |
+| `rna_only` | ATAC→ RNA↑ | RNA change not explained by local chromatin (trans regulation, RNA stability, unmeasured layer) |
+| `discordant_opposite` | ATAC↑ RNA↓ or ATAC↓ RNA↑ | Opposite directions across layers; may indicate complex regulation or technical issues |
+| `null` | ATAC→ RNA→ | No significant change under the current condition |
 
-同时，每个事件附带 **artifact_risk**（技术伪影风险）：
+Each event also carries an **artifact_risk** flag:
 
-| 风险等级 | 含义 |
+| Risk Level | Meaning |
 |---|---|
-| `low` | 数据质量良好，结果可信 |
-| `medium` | 存在一定的质量问题 |
-| `high` | 单模态显著 + 低质量分数，建议谨慎解读 |
+| `low` | Good data quality; results are trustworthy |
+| `medium` | Some quality concerns present |
+| `high` | Single-modality signal with low quality score; interpret with caution |
 
-这种双层设计（biological state + artifact risk）比将 "artifact_like" 作为主状态更合理：
-一个事件可以同时是 `chromatin_primed` 且 `artifact_risk = high`，
-而不是被简单标记为 "artifact" 而丢失生物学信息。
+This two-layer design (biological state + artifact risk) is more informative than labeling
+events as "artifact": an event can be both `chromatin_primed` *and* `artifact_risk = high`,
+preserving the biological signal while flagging quality concerns.
 
 ---
 
-## 2. 当前版本状态
+## 2. Current Status
 
-**MoDES-RA v0.1.0-alpha** — RNA + ATAC 原型。
+**MoDES-RA v0.1.0-alpha** — RNA + ATAC prototype.
 
-| 能力 | 状态 |
+| Capability | Status |
 |---|---|
-| RNA + ATAC 两层分析 | ✅ 已支持 |
-| 二分类条件比较 | ✅ 已支持 |
-| Bulk 数据输入 | ✅ 推荐 |
-| Pseudobulk 聚合 | ✅ 实验性支持 |
-| Protein 层 | 🔮 计划中 (v0.2) |
-| Spatial graph | 🔮 计划中 (v0.4) |
-| 多分类条件 / 连续协变量 | 🔮 计划中 |
-| 时间 / pseudotime 延迟 | 🔮 计划中 |
+| RNA + ATAC two-layer analysis | ✅ Supported |
+| Binary condition comparison | ✅ Supported |
+| Bulk data input | ✅ Recommended |
+| Pseudobulk aggregation | ✅ Experimental |
+| Protein layer | 🔮 Planned (v0.2) |
+| Spatial graph | 🔮 Planned (v0.4) |
+| Multi-class condition / continuous covariate | 🔮 Planned |
+| Time / pseudotime delay | 🔮 Planned |
 
 ---
 
-## 3. 安装
+## 3. Installation
 
 ```bash
-# 基础安装
+# Base installation
 pip install -e .
 
-# 运行测试（可选）
+# Run tests (optional)
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-依赖：`numpy`, `scipy`, `pandas`, `statsmodels`, `anndata`, `matplotlib`, `seaborn`, `networkx`
+Dependencies: `numpy`, `scipy`, `pandas`, `statsmodels`, `anndata`, `matplotlib`, `seaborn`,
+`networkx`.
 
 ---
 
-## 4. 使用方法
+## 4. Usage
 
-### 4.1 快速开始
+### 4.1 Quick Start
 
 ```python
 import pandas as pd
 from modes import MoDES, MoDEData
 
-# 1. 加载数据
+# 1. Load data
 data = MoDEData.from_matrices(
     rna_counts="rna_counts.tsv",
     atac_counts="atac_peaks.tsv",
@@ -121,10 +125,10 @@ data = MoDEData.from_matrices(
     index_col=0,
 )
 
-# 2. 加载 peak-gene 链接（推荐方式）
+# 2. Load peak-gene links (recommended approach)
 links = pd.read_csv("peak_gene_links.tsv", sep="\t")
 
-# 3. 运行 MoDES
+# 3. Run MoDES
 modes = MoDES(
     data=data,
     condition_col="condition",
@@ -132,54 +136,54 @@ modes = MoDES(
 )
 result = modes.run()
 
-# 4. 查看结果
+# 4. View results
 print(result.summary())
 
-# 5. 导出
+# 5. Export
 result.to_tsv("output/")
 result.to_graphml("output/network.graphml")
 result.to_report("output/report.html")
 ```
 
-### 4.2 分步运行
+### 4.2 Step-by-Step Execution
 
-你也可以逐步执行，方便调试和交互式分析：
+Each step can be run independently for debugging and interactive analysis:
 
 ```python
 modes = MoDES(data=data, condition_col="condition", external_links=links)
 
-# Step 1: 构建候选事件
+# Step 1: Build candidate events
 events = modes.build_events()
 
-# Step 2: 估计 ATAC 和 RNA 效应
+# Step 2: Estimate ATAC and RNA effects
 atac_effects, rna_effects = modes.estimate_effects()
 
-# Step 3: 条件分解（RNA after ATAC）
+# Step 3: Conditional decomposition (RNA after ATAC)
 conditional = modes.decompose()
 
-# Step 4: 构造证据向量
+# Step 4: Build evidence vectors
 evidence = modes.build_evidence()
 
-# Step 5: 状态分类
+# Step 5: Classify states
 states = modes.classify_states()
 
-# 组装最终结果
+# Assemble final results
 result = modes._assemble_results()
 ```
 
-### 4.3 过滤结果
+### 4.3 Filtering Results
 
 ```python
-# 只看 concordant 事件
+# View only concordant events
 conc = result.filter(state="concordant")
 
-# 排除高风险事件
+# Exclude high artifact-risk events
 clean = result.filter(exclude_high_artifact=True)
 
-# 按 event FDR 筛选
+# Filter by event-level FDR
 sig = result.filter(max_event_fdr=0.1)
 
-# 组合过滤
+# Combine filters
 trusted = result.filter(
     state="concordant",
     min_confidence=0.8,
@@ -188,7 +192,7 @@ trusted = result.filter(
 )
 ```
 
-### 4.4 运行示例
+### 4.4 Run the Example
 
 ```bash
 python examples/minimal_bulk/run_minimal.py
@@ -196,51 +200,51 @@ python examples/minimal_bulk/run_minimal.py
 
 ---
 
-## 5. 参数设置
+## 5. Parameter Reference
 
-### 5.1 MoDES 初始化参数
+### 5.1 MoDES Constructor
 
-| 参数 | 类型 | 默认值 | 说明 |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `data` | `MoDEData` | 必需 | 输入数据容器 |
-| `condition_col` | `str` | 必需 | `data.obs` 中指定条件的列名（必须为二分类） |
-| `covariate_cols` | `list[str]` | `[]` | 额外协变量列名 |
-| `donor_col` | `str` | `None` | 捐赠者/重复标识列（作为固定效应） |
-| `batch_col` | `str` | `None` | 批次标识列（作为固定效应） |
-| `fdr_threshold` | `float` | `0.1` | 状态分类的 FDR 显著性阈值 |
-| `genome_annotation` | `str` | `None` | GTF/GFF 文件路径，用于获取基因 TSS 坐标 |
-| `external_links` | `DataFrame` | `None` | 预计算的 peak-to-gene 链接表（推荐） |
-| `motif_annotation` | `DataFrame` | `None` | peak-to-TF motif 注释表 |
-| `tss_map` | `dict` | `None` | 手动指定的 gene → (name, chr, tss_pos) 映射 |
+| `data` | `MoDEData` | required | Input data container |
+| `condition_col` | `str` | required | Column in `data.obs` specifying the binary condition |
+| `covariate_cols` | `list[str]` | `[]` | Additional covariate column names |
+| `donor_col` | `str` | `None` | Donor/replicate identifier (treated as fixed effect) |
+| `batch_col` | `str` | `None` | Batch identifier (treated as fixed effect) |
+| `fdr_threshold` | `float` | `0.1` | FDR threshold for significance calls in state classification |
+| `genome_annotation` | `str` | `None` | Path to GTF/GFF file for gene TSS coordinates |
+| `external_links` | `DataFrame` | `None` | Pre-computed peak-to-gene links (recommended) |
+| `motif_annotation` | `DataFrame` | `None` | Peak-to-TF motif mapping |
+| `tss_map` | `dict` | `None` | Manual `gene → (name, chr, tss_pos)` mapping |
 
-### 5.2 `external_links` 格式
+### 5.2 `external_links` Format
 
-| 列名 | 必需 | 说明 |
+| Column | Required | Description |
 |---|---|---|
-| `peak_id` | ✅ | peak 标识符，格式 `chr:start-end` |
-| `gene` | ✅ | 基因名称 |
-| `tf_name` | 可选 | TF 注释 |
-| `source` | 可选 | 链接来源（如 `scenic`, `scarlink`, `archr`） |
+| `peak_id` | ✅ | Peak identifier, format `chr:start-end` |
+| `gene` | ✅ | Gene name |
+| `tf_name` | optional | TF annotation |
+| `source` | optional | Link provenance (e.g. `scenic`, `scarlink`, `archr`) |
 
-### 5.3 `MoDEData.from_matrices()` 参数
+### 5.3 `MoDEData.from_matrices()` Parameters
 
-| 参数 | 类型 | 说明 |
+| Parameter | Type | Description |
 |---|---|---|
-| `rna_counts` | `str` 或 `DataFrame` | RNA count matrix（samples × genes） |
-| `atac_counts` | `str` 或 `DataFrame` | ATAC peak count matrix（samples × peaks） |
-| `metadata` | `str` 或 `DataFrame` | 样本元数据，必须包含条件列 |
-| `condition_col` | `str` | 条件列名 |
-| `donor_col` | `str` | 捐赠者列名（可选） |
-| `batch_col` | `str` | 批次列名（可选） |
-| `index_col` | `int` | TSV 文件中行索引列（默认 0） |
+| `rna_counts` | `str` or `DataFrame` | RNA count matrix (samples × genes) |
+| `atac_counts` | `str` or `DataFrame` | ATAC peak count matrix (samples × peaks) |
+| `metadata` | `str` or `DataFrame` | Sample metadata; must contain the condition column |
+| `condition_col` | `str` | Condition column name |
+| `donor_col` | `str` | Donor column name (optional) |
+| `batch_col` | `str` | Batch column name (optional) |
+| `index_col` | `int` | Row index column in TSV files (default 0) |
 
 ---
 
-## 6. 输入文件格式
+## 6. Input File Formats
 
-### 6.1 Bulk count matrix（TSV）
+### 6.1 Bulk Count Matrix (TSV)
 
-**rna_counts.tsv** — 行 = 样本，列 = 基因：
+**rna_counts.tsv** — rows = samples, columns = genes:
 
 | sample | STAT1 | GZMB | IL7R |
 |---|---|---|---|
@@ -248,115 +252,118 @@ python examples/minimal_bulk/run_minimal.py
 | ctrl_2 | 98 | 92 | 180 |
 | trt_1 | 350 | 90 | 220 |
 
-**atac_counts.tsv** — 行 = 样本，列 = peaks：
+**atac_counts.tsv** — rows = samples, columns = peaks:
 
 | sample | chr1:100-200 | chr2:300-400 |
 |---|---|---|
 | ctrl_1 | 50 | 60 |
 | trt_1 | 180 | 55 |
 
-### 6.2 样本元数据
+### 6.2 Sample Metadata
 
-**metadata.tsv**：
+**metadata.tsv**:
 
 | sample | condition | batch |
 |---|---|---|
 | ctrl_1 | control | A |
 | trt_1 | treatment | B |
 
-`condition` 列必须为二分类（如 control / treatment）。
+The `condition` column must be binary (e.g. control / treatment).
 
-### 6.3 Peak-gene 链接
+### 6.3 Peak-Gene Links
 
-**peak_gene_links.tsv**：
+**peak_gene_links.tsv**:
 
 | peak_id | gene | tf_name |
 |---|---|---|
 | chr1:100-200 | STAT1 | IRF1 |
 | chr2:300-400 | GZMB | |
 
-> **注意**：普通 gene symbols（如 STAT1、GZMB）没有基因组坐标。如果不提供
-> `external_links`、`genome_annotation` 或 `tss_map`，
-> MoDES 会报错提示无法生成候选事件。
+> **Important**: Plain gene symbols (e.g. STAT1, GZMB) lack genomic coordinates. If you
+> do not provide `external_links`, `genome_annotation`, or `tss_map`, MoDES will raise
+> an error because no candidate events can be generated.
 
 ---
 
-## 7. 算法详解
+## 7. Algorithm Details
 
-### Step 1：Event Candidate Construction（事件候选构建）
+### Step 1: Event Candidate Construction
 
-为每个 gene 寻找候选 regulatory elements：
+For each gene, candidate regulatory elements are identified from:
 
-- **promoter peaks**：TSS ± 2kb 范围内的 peaks
-- **distal peaks**：TSS ± 250kb 范围内的 peaks
-- **external links**：来自 SCENIC+、SCARlink、ArchR 等的预计算链接
-- **motif annotation**：peak 上的 TF motif 信息
+- **Promoter peaks**: within ±2 kb of the TSS
+- **Distal peaks**: within ±250 kb of the TSS
+- **External links**: pre-computed links from SCENIC+, SCARlink, ArchR, etc.
+- **Motif annotation**: TF binding motifs on peaks
 
-### Step 2：Effect Size Estimation（效应估计）
+### Step 2: Effect Size Estimation
 
-对每个 peak 和 gene，使用 **Negative Binomial GLM**（log link）估计 condition effect：
+For each peak and gene, a **Negative Binomial GLM** (log link) estimates the condition
+effect:
 
 ```
 log(E[Y_u]) = α + β_cond × C_u + X_u × γ + offset(log(libsize_u))
 ```
 
-其中：
-- `C_u` = condition indicator（0/1）
-- `X_u` = 协变量矩阵（batch、donor、age 等）
-- `offset` = log library size（DESeq2-style median-of-ratios normalization）
+where:
+- `C_u` = condition indicator (0/1)
+- `X_u` = covariate matrix (batch, donor, age, etc.)
+- `offset` = log library size (DESeq2-style median-of-ratios normalization)
 
-效应估计后应用 **limma-style 经验贝叶斯方差收缩**：
-- 将所有 feature 的方差 pooled 到一起，估计先验分布
-- 计算后验方差，得到更稳定的 moderated t-statistic
-- 对小样本场景特别有效
+**Limma-style empirical Bayes variance moderation** is applied post-hoc:
+- Variance estimates are pooled across all features to estimate a prior distribution
+- Posterior variances produce more stable moderated t-statistics
+- Particularly effective for small-sample scenarios
 
-多重检验校正：**Benjamini-Hochberg FDR**（按 modality 分别校正）。
+Multiple testing correction: **Benjamini-Hochberg FDR** (per modality).
 
-### Step 3：Conditional Decomposition（条件分解）
+### Step 3: Conditional Decomposition
 
-核心统计问题：**RNA condition effect 是否可以被 local chromatin accessibility 解释？**
+The core statistical question: **can the RNA condition effect be explained by local
+chromatin accessibility?**
 
-比较两个模型：
+Two models are compared:
 
-**Model 0（RNA-only）**：
+**Model 0 (RNA-only)**:
 ```
 log(E[RNA_g]) ~ Condition + Covariates
 ```
 
-**Model 1（RNA | ATAC）**：
+**Model 1 (RNA | ATAC)**:
 ```
 log(E[RNA_g]) ~ Condition + ATAC_peak + Covariates
 ```
 
-关键量：**β_cond 从 Model 0 到 Model 1 的衰减**。
+The key quantity is the attenuation of β_cond from Model 0 to Model 1:
 
-| β_cond 变化 | 解释 |
+| β_cond Change | Interpretation |
 |---|---|
-| Model 0 显著，Model 1 不显著 | RNA 变化可被 local chromatin 解释（concordant 证据） |
-| Model 0 显著，Model 1 仍显著，衰减很小 | RNA 有 ATAC 不能解释的剩余效应（rna_only 证据） |
-| Model 0 不显著 | 无 RNA 层效应 |
+| Significant in M0, not in M1 | RNA change explained by local chromatin (concordant evidence) |
+| Significant in M0, still significant in M1, little attenuation | RNA has residual effect not explained by ATAC (rna_only evidence) |
+| Not significant in M0 | No RNA-layer effect |
 
-> **注意**：条件模型中使用单个 linked peak 作为协变量，因此解释应为
-> "condition effect after adjustment for the linked ATAC peak"，
-> 而非 "ATAC explains RNA"。
+> **Note**: The conditional model uses a single linked peak as covariate. The correct
+> interpretation is "condition effect after adjustment for the linked ATAC peak," not
+> "ATAC explains RNA."
 
-### Step 4：Evidence Vector Construction（证据向量构造）
+### Step 4: Evidence Vector Construction
 
-对每个 event `e`，构造标准化证据向量：
+For each event `e`, a standardized evidence vector is built:
 
 ```
 D_e = [z_ATAC, z_RNA, z_RNA|ATAC, quality_score]
 ```
 
-其中：
-- `z_m = coef_m / SE(coef_m)` — 标准化效应（z-score）
-- `quality_score ∈ [0, 1]` — 数据质量分数（基于 sequencing depth、detection rate、batch association 等）
+where:
+- `z_m = coef_m / SE(coef_m)` — standardized effect (z-score)
+- `quality_score ∈ [0, 1]` — data quality score (from sequencing depth, detection rate,
+  batch association, etc.)
 
-### Step 5：State Classification（状态分类）
+### Step 5: State Classification
 
-两层分类：
+Two-stage classification:
 
-**Stage 1 — 基于规则**：
+**Stage 1 — Rule-based**:
 ```
 if ATAC_sig and RNA_sig and same_direction → concordant
 elif ATAC_sig and RNA_sig and opposite → discordant_opposite
@@ -365,105 +372,147 @@ elif not ATAC_sig and RNA_sig → rna_only
 else → null
 ```
 
-**Stage 2 — 经验贝叶斯 refinement**：
-- 用 rule-based 的结果作为初始标签
-- 拟合每个状态的 Gaussian 分布（在 evidence vector 空间）
-- 计算每个事件的 state_confidence（后验概率近似值）
+**Stage 2 — Empirical Bayes refinement**:
+- Rule-based labels serve as initial assignments
+- Per-state Gaussian distributions are fitted in evidence-vector space
+- State confidence is computed for each event (rule-refined confidence, not a
+  calibrated posterior)
 
-同时计算 **artifact_risk**：
+**Artifact risk** is computed independently:
 ```
-quality_score < threshold → 检查是否为单模态显著
-  yes → artifact_risk = high, artifact_reason = low_quality_score;single_modality_low_quality
-  no  → artifact_risk = medium
+quality_score < threshold
+  → check if single-modality significant
+    yes → artifact_risk = high
+    no  → artifact_risk = medium
 else → artifact_risk = low
 ```
 
 ---
 
-## 8. 输出文件
+## 8. Statistical Models
 
-### 8.1 文件清单
+### 8.1 GLM Fitting Strategy
 
-| 文件 | 格式 | 说明 |
-|---|---|---|
-| `event_table.tsv` | TSV | **主输出**：每个 peak-gene 事件一行 |
-| `event_state_confidence.tsv` | TSV | 每个事件的状态、置信度、artifact_risk |
-| `event_layer_effects.tsv` | TSV | ATAC/RNA 层效应估计值 |
-| `event_evidence_vectors.tsv` | TSV | 状态分类使用的 evidence vector |
-| `model_diagnostics.tsv` | TSV | ATAC/RNA marginal GLM 模型诊断 |
-| `run_params.tsv` | TSV | 运行参数和数据摘要 |
-| `event_network.graphml` | GraphML | TF-peak-gene 网络（可选） |
-| `report.html` | HTML | 可视化和统计摘要（可选） |
+Each feature (peak or gene) is fit with a multi-level fallback:
 
-> `model_diagnostics.tsv` 当前仅包含 marginal ATAC 和 RNA GLM 的诊断信息。
-> 条件分解（RNA-after-ATAC）的诊断在 `event_table.tsv` 中汇总，
-> 完整的条件模型诊断将在后续版本中提供。
+| Priority | Model | Family | When Used |
+|---|---|---|---|
+| 1 | NB with default α | NegativeBinomial | Preferred; most flexible |
+| 2 | NB with α = 1.0 | NegativeBinomial | Fallback 1: more stable |
+| 3 | Poisson | Poisson | Fallback 2: no overdispersion |
+| 4 | Simplified NB | NegativeBinomial (α=1.0) | Fallback 3: intercept + condition only |
 
-### 8.2 event_table.tsv 字段详解
+All fallback outcomes are recorded in `model_diagnostics.tsv` with the specific
+`model_used`, `family`, and whether covariates were dropped.
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `event_id` | str | 事件唯一标识符 |
-| `tf_name` | str/NA | 与该 peak 关联的 TF 名称（来自 motif 注释） |
-| `peak_id` | str | ATAC peak 标识符（如 `chr1:100-200`） |
-| `gene` | str | target gene 名称 |
-| `context` | str | 上下文标签（如 cell type + condition） |
-| `state` | str | 生物学状态：`concordant` / `chromatin_primed` / `rna_only` / `discordant_opposite` / `null` |
-| `state_confidence` | float | 状态置信度，范围 0–1（非严格校准的后验概率，不宜在论文中称 posterior） |
-| `artifact_risk` | str | 技术风险：`low` / `medium` / `high`（不是生物学状态） |
-| `artifact_reason` | str | 风险原因，分号分隔（如 `low_quality_score;single_modality_low_quality`） |
-| `event_pval` | float | event-level p-value（根据 state 组合 ATAC/RNA p-value） |
-| `event_fdr` | float | event-level BH-corrected FDR |
-| `atac_coef` | float | condition 对 ATAC peak 的效应（log fold change 尺度） |
-| `atac_se` | float | ATAC 效应的标准误 |
-| `atac_pval` | float | ATAC 层 p-value |
-| `atac_fdr` | float | ATAC 层 BH-corrected FDR |
-| `atac_direction` | int | ATAC 效应方向（+1 / -1 / 0） |
-| `rna_coef` | float | condition 对 RNA gene 的效应（log fold change 尺度） |
-| `rna_se` | float | RNA 效应的标准误 |
-| `rna_pval` | float | RNA 层 p-value |
-| `rna_fdr` | float | RNA 层 BH-corrected FDR |
-| `rna_direction` | int | RNA 效应方向（+1 / -1 / 0） |
-| `rna_after_atac_coef` | float | 控制 linked ATAC peak 后的 condition 效应 |
-| `rna_after_atac_se` | float | 条件效应的标准误 |
-| `rna_after_atac_pval` | float | 条件效应的 p-value |
-| `rna_after_atac_fdr` | float | 条件效应的 BH-corrected FDR |
-| `quality_score` | float | event 质量分数（0–1，基于测序深度、检出率等） |
+### 8.2 Design Matrix
+
+The design matrix includes:
+- Intercept
+- Condition (binary, dummy-coded)
+- Covariates (numeric or one-hot encoded categorical)
+- Batch (one-hot encoded, first category as reference)
+- Donor (one-hot encoded, first category as reference)
+
+A rank check is performed; rank-deficient designs (e.g. condition perfectly confounded
+with batch) raise a `ValueError`.
+
+### 8.3 Event-Level Significance
+
+Event-level p-values are computed based on state:
+- `concordant` / `discordant_opposite`: `max(atac_pval, rna_pval)`
+- `chromatin_primed`: `atac_pval`
+- `rna_only`: `rna_pval`
+- `null`: 1.0
+
+BH correction is applied across all events to produce `event_fdr`.
 
 ---
 
-## 9. 结果解析指南
+## 9. Output Files
 
-### 9.1 如何解读状态
+### 9.1 File Inventory
 
-**concordant** → 高置信度的顺式调控事件。局部 chromatin 开放伴随着转录上升。
-适合用于构建 core regulatory network。
+| File | Format | Description |
+|---|---|---|
+| `event_table.tsv` | TSV | **Main output**: one row per peak-gene event |
+| `event_state_confidence.tsv` | TSV | State, state_confidence, artifact_risk per event |
+| `event_layer_effects.tsv` | TSV | ATAC/RNA layer effect estimates |
+| `event_evidence_vectors.tsv` | TSV | Evidence vectors used for state classification |
+| `model_diagnostics.tsv` | TSV | Marginal ATAC/RNA GLM diagnostics |
+| `run_params.tsv` | TSV | Run parameters and data summary |
+| `event_network.graphml` | GraphML | TF-peak-gene network (optional) |
+| `report.html` | HTML | Visualizations and statistical summary (optional) |
 
-**chromatin_primed** → 染色质层已变化但转录尚未改变。可能代表：
-- 发育过程中的 lineage priming
-- 药物处理后早期的表观响应
-- 需要二次刺激才能激活的 poised enhancer
+> `model_diagnostics.tsv` currently reports marginal ATAC and RNA GLM diagnostics only.
+> Conditional RNA-after-ATAC diagnostics are summarized in `event_table.tsv`;
+> full conditional diagnostics will be added in a future version.
 
-**rna_only** → RNA 变化不由 local ATAC 解释。可能来自：
-- 远端 enhancer 的 trans 调控
-- RNA stability 变化
-- TF 活性变化而非 chromatin 变化
-- peak calling 未覆盖到关键调控区域
+### 9.2 event_table.tsv — Complete Field Reference
 
-**discordant_opposite** → ATAC 和 RNA 方向相反。最常见的解释：
-- 负反馈调控
-- repressor binding
-- 需要进一步实验验证
+| Field | Type | Description |
+|---|---|---|
+| `event_id` | str | Unique event identifier |
+| `tf_name` | str/NA | TF name associated with this peak (from motif annotation) |
+| `peak_id` | str | ATAC peak identifier (e.g. `chr1:100-200`) |
+| `gene` | str | Target gene name |
+| `context` | str | Context label (e.g. cell type + condition) |
+| `state` | str | Biological state: `concordant` / `chromatin_primed` / `rna_only` / `discordant_opposite` / `null` |
+| `state_confidence` | float | State confidence, range 0–1 (rule-refined; not a calibrated posterior) |
+| `artifact_risk` | str | Technical risk: `low` / `medium` / `high` (not a biological state) |
+| `artifact_reason` | str | Risk reasons, semicolon-separated (e.g. `low_quality_score;single_modality_low_quality`) |
+| `event_pval` | float | Event-level p-value (computed from state-specific combination of ATAC/RNA p-values) |
+| `event_fdr` | float | Event-level BH-corrected FDR |
+| `atac_coef` | float | Condition effect on ATAC peak (log fold change scale) |
+| `atac_se` | float | Standard error of ATAC effect |
+| `atac_pval` | float | ATAC-layer p-value |
+| `atac_fdr` | float | ATAC-layer BH-corrected FDR |
+| `atac_direction` | int | ATAC effect direction (+1 / -1 / 0) |
+| `rna_coef` | float | Condition effect on RNA gene (log fold change scale) |
+| `rna_se` | float | Standard error of RNA effect |
+| `rna_pval` | float | RNA-layer p-value |
+| `rna_fdr` | float | RNA-layer BH-corrected FDR |
+| `rna_direction` | int | RNA effect direction (+1 / -1 / 0) |
+| `rna_after_atac_coef` | float | Condition effect after adjusting for the linked ATAC peak |
+| `rna_after_atac_se` | float | Standard error of conditional effect |
+| `rna_after_atac_pval` | float | Conditional effect p-value |
+| `rna_after_atac_fdr` | float | Conditional effect BH-corrected FDR |
+| `quality_score` | float | Event quality score (0–1; based on sequencing depth, detection rate, etc.) |
 
-**null** → 该事件在当前条件下无显著变化。
+---
 
-### 9.2 如何评估可信度
+## 10. Interpretation Guide
 
-1. **先看 `artifact_risk`**：优先关注 `low` 和 `medium` 的事件；`high` 的事件需要谨慎
-2. **再看 `state_confidence`**：> 0.8 的事件更可靠
-3. **最后看 `event_fdr`**：event-level FDR < 0.1 的事件有统计显著性保证
+### 10.1 How to Read States
 
-推荐的筛选流程：
+**concordant** — High-confidence cis-regulatory event. Local chromatin opening is
+accompanied by transcriptional increase. Suitable for building core regulatory networks.
+
+**chromatin_primed** — Chromatin has changed but transcription has not. May represent:
+- Lineage priming during development
+- Early epigenetic response to drug treatment
+- Poised enhancers requiring a second stimulus
+
+**rna_only** — RNA change not explained by local ATAC. May arise from:
+- Trans regulation via distal enhancers
+- RNA stability changes
+- TF activity changes without chromatin remodeling
+- Peak calling that missed key regulatory regions
+
+**discordant_opposite** — ATAC and RNA move in opposite directions. Common explanations:
+- Negative feedback regulation
+- Repressor binding
+- Requires further experimental validation
+
+**null** — No significant change under the current condition for this event.
+
+### 10.2 Credibility Assessment
+
+1. **Check `artifact_risk` first**: prioritize `low` and `medium`; treat `high` with caution
+2. **Then check `state_confidence`**: events with > 0.8 are more reliable
+3. **Finally check `event_fdr`**: event-level FDR < 0.1 provides statistical guarantee
+
+Recommended filtering pipeline:
 
 ```python
 trusted = result.filter(
@@ -473,45 +522,46 @@ trusted = result.filter(
 )
 ```
 
-### 9.3 常见问题
+### 10.3 FAQ
 
-**Q: 为什么我的 concordant 事件很少？**
+**Q: Why do I have very few concordant events?**
 
-A: 可能原因：
-- 样本量太小（n < 5 per group），统计 power 不足
-- 效应量确实很小（biological）
-- 使用了严格的 FDR 阈值（尝试提高 `fdr_threshold`）
-- peak-gene 链接质量不够（尝试使用高质量的 external_links）
+A: Possible reasons:
+- Small sample size (n < 5 per group) — insufficient statistical power
+- Genuinely small effect sizes (biological)
+- Strict FDR threshold — try increasing `fdr_threshold`
+- Low-quality peak-gene links — try high-quality external links from SCENIC+ / SCARlink
 
-**Q: 为什么很多事件是 null？**
+**Q: Why are many events null?**
 
-A: null 是正常结果 — 大多数 peak-gene pairs 在特定条件下确实没有变化。
-可以关注非 null 事件的生物学功能富集。
+A: Null is expected — most peak-gene pairs are not differentially regulated in any given
+condition. Focus on functional enrichment of non-null events.
 
-**Q: artifact_risk = high 的事件应该怎么处理？**
+**Q: How should I handle artifact_risk = high events?**
 
-A: 不要直接删除 — 它们可能仍然包含生物学信号。建议：
-- 检查原始 count 数据的质量
-- 对比 `artifact_reason` 字段了解具体原因
-- 在后续分析中将它们标记为 "需要验证"
+A: Do not discard them outright — they may still contain biological signal. Recommendations:
+- Inspect the raw count data quality
+- Check the `artifact_reason` field for specific causes
+- Flag them as "requires validation" in downstream analyses
 
 ---
 
-## 10. CI / 测试
+## 11. Testing
 
 ![tests](https://github.com/Lings01/MoDES/actions/workflows/tests.yml/badge.svg)
 
 ```bash
-python -m pytest -q          # 运行全部测试
-python -m pytest -k "states" # 运行状态分类相关测试
+python -m pytest -q              # Run all tests
+python -m pytest -k "states"     # Run state classification tests only
+python -m pytest -k "integration" # Run integration tests
 ```
 
 ---
 
-## 11. 引用
+## 12. Citation
 
 MoDES: Multi-Omics Discordance-guided decomposition of regulatory event states.
 
-## 12. License
+## 13. License
 
 MIT
