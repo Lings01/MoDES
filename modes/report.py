@@ -19,7 +19,7 @@ def _esc(x):
 
 ALLOWED_STATES = {
     "concordant", "chromatin_primed", "rna_only",
-    "artifact_like", "discordant_opposite", "null",
+    "discordant_opposite", "null",
 }
 
 
@@ -50,7 +50,7 @@ TEMPLATE = """<!DOCTYPE html>
   .concordant {{ background: #2ca02c33; color: #1b6e1b; }}
   .chromatin_primed {{ background: #ff7f0e33; color: #b85b00; }}
   .rna_only {{ background: #1f77b433; color: #0d3b6e; }}
-  .artifact_like {{ background: #d6272833; color: #8b1a1a; }}
+  .discordant_opposite {{ background: #d6272833; color: #8b1a1a; }}
   .null {{ background: #7f7f7f33; color: #555; }}
   .artifact-risk-low {{ color: #2e7d32; }}
   .artifact-risk-medium {{ color: #ef6c00; }}
@@ -195,9 +195,9 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
         </table>"""
 
     # Event table (top 50 by confidence)
-    top_events = results.event_table.nlargest(50, "confidence")
+    top_events = results.event_table.nlargest(50, "state_confidence")
     display_cols = [
-        "event_id", "gene", "peak_id", "state", "confidence",
+        "event_id", "gene", "peak_id", "state", "state_confidence",
         "artifact_risk",
         "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
     ]

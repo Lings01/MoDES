@@ -102,7 +102,7 @@ class EventResult:
     rna_after_atac_pval: float
     rna_after_atac_fdr: float
     state: str
-    confidence: float
+    state_confidence: float
     quality_score: float
     artifact_risk: str = "low"
     artifact_reason: str = ""

@@ -24,7 +24,7 @@ def _event_result_columns():
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
-        "state", "confidence", "quality_score",
+        "state", "state_confidence", "quality_score",
         "artifact_risk", "artifact_reason",
         "event_pval", "event_fdr",
     ]
@@ -327,7 +327,7 @@ class MoDES:
                 "rna_after_pval": rna_after_pval,
                 "rna_after_fdr": rna_after_fdr,
                 "state": state,
-                "confidence": confidence,
+                "state_confidence": confidence,
                 "artifact_risk": artifact_risk,
                 "artifact_reason": artifact_reason,
                 "quality": quality,
@@ -365,7 +365,7 @@ class MoDES:
                     rna_after_atac_pval=d["rna_after_pval"],
                     rna_after_atac_fdr=d["rna_after_fdr"],
                     state=d["state"],
-                    confidence=d["confidence"],
+                    state_confidence=d["state_confidence"],
                     quality_score=d["quality"],
                     artifact_risk=d["artifact_risk"],
                     artifact_reason=d["artifact_reason"],
@@ -522,7 +522,7 @@ class MoDESResult:
         min_rna_fdr: Optional[float] = None,
         exclude_high_artifact: bool = False,
         max_artifact_risk: Optional[str] = None,
-        min_event_fdr: Optional[float] = None,
+        max_event_fdr: Optional[float] = None,
     ) -> pd.DataFrame:
         """
         Filter the event table.
@@ -541,7 +541,7 @@ class MoDESResult:
             Exclude events with artifact_risk == "high".
         max_artifact_risk : str, optional
             Maximum allowed artifact risk ("low" < "medium" < "high").
-        min_event_fdr : float, optional
+        max_event_fdr : float, optional
             Minimum event-level FDR threshold.
 
         Returns
@@ -554,7 +554,7 @@ class MoDESResult:
             df = df[df["state"] == state]
 
         if min_confidence > 0:
-            df = df[df["confidence"] >= min_confidence]
+            df = df[df["state_confidence"] >= min_confidence]
 
         if fdr_threshold is not None:
             df = df[
@@ -568,8 +568,8 @@ class MoDESResult:
         if min_rna_fdr is not None:
             df = df[df["rna_fdr"] < min_rna_fdr]
 
-        if min_event_fdr is not None and "event_fdr" in df.columns:
-            df = df[df["event_fdr"] < min_event_fdr]
+        if max_event_fdr is not None and "event_fdr" in df.columns:
+            df = df[df["event_fdr"] <= max_event_fdr]
 
         if exclude_high_artifact and "artifact_risk" in df.columns:
             df = df[df["artifact_risk"] != "high"]
@@ -650,7 +650,11 @@ class MoDESResult:
                 gene_node, peak_node,
                 type="event",
                 state=row["state"],
-                confidence=row["confidence"],
+                state_confidence=float(row.get("state_confidence", np.nan)),
+                artifact_risk=str(row.get("artifact_risk", "low")),
+                artifact_reason=str(row.get("artifact_reason", "")),
+                event_pval=float(row.get("event_pval", 1.0)),
+                event_fdr=float(row.get("event_fdr", 1.0)),
                 atac_coef=row["atac_coef"],
                 rna_coef=row["rna_coef"],
             )

@@ -68,11 +68,21 @@ class EventCandidateBuilder:
         """
         rows = []
 
+        import warnings as _warnings
+
         # Parse peak coordinates
         peak_coords = [_parse_peak_name(p) for p in peak_names]
         peak_df = pd.DataFrame(
             peak_coords, columns=["peak_id", "chr", "start", "end"]
         )
+        n_unknown_peaks = (peak_df["chr"] == "unknown").sum()
+        if n_unknown_peaks > 0:
+            _warnings.warn(
+                f"{n_unknown_peaks}/{len(peak_names)} peaks could not be parsed "
+                "as genomic intervals and may be excluded from coordinate-based "
+                "event generation.",
+                UserWarning,
+            )
 
         # Parse gene TSS from names if format gene:chr:pos is used,
         # or from genome annotation, or from manual map
@@ -82,6 +92,26 @@ class EventCandidateBuilder:
             self._tss_map = _parse_gtf_tss(genome_annotation, gene_names)
         else:
             self._tss_map = _parse_gene_tss_from_names(gene_names)
+
+        # Warn about genes with no genomic coordinates
+        n_total_genes = len(gene_names)
+        n_missing_genes = 0
+        for g in gene_names:
+            tss_info = self._tss_map.get(g)
+            if tss_info is None:
+                n_missing_genes += 1
+                continue
+            chrom = tss_info[1] if len(tss_info) > 1 else ""
+            if chrom in {"", "unknown", None}:
+                n_missing_genes += 1
+        if n_missing_genes > 0:
+            _warnings.warn(
+                f"{n_missing_genes}/{n_total_genes} genes have no genomic "
+                "coordinates and may be excluded from coordinate-based event "
+                "generation. Provide genome_annotation, tss_map, or "
+                "external_links for better coverage.",
+                UserWarning,
+            )
 
         # 1. Promoter and distal peaks per gene
         for gene in gene_names:

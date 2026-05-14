@@ -79,7 +79,7 @@ result.to_report("output/report.html")
 | event_state_confidence.tsv | 状态置信度 |
 | event_layer_effects.tsv | 每层效应大小 |
 | event_evidence_vectors.tsv | 证据向量 |
-| model_diagnostics.tsv | 模型诊断信息 |
+| model_diagnostics.tsv | 模型诊断信息（当前仅包含 marginal ATAC/RNA GLM 诊断，条件分解诊断待后续版本） |
 | run_params.tsv | 运行参数 |
 
 #### event_table.tsv 字段

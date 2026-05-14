@@ -167,7 +167,8 @@ class StateClassifier:
         """Classify events into biological states with artifact risk."""
         if evidence.empty:
             return pd.DataFrame(columns=[
-                "event_id", "state", "state_confidence", "artifact_risk"
+                "event_id", "state", "state_confidence",
+                "artifact_risk", "artifact_reason",
             ])
 
         # Stage 1: Rule-based
@@ -286,6 +287,7 @@ class StateClassifier:
         for i, (_, row) in enumerate(evidence.iterrows()):
             current_state = states.iloc[i]["state"]
             current_risk = states.iloc[i]["artifact_risk"]
+            current_reason = states.iloc[i].get("artifact_reason", "")
 
             if not valid.iloc[i]:
                 confidences_all.append({
@@ -293,6 +295,7 @@ class StateClassifier:
                     "state_confidence": 1.0,
                     "state": current_state,
                     "artifact_risk": current_risk,
+                    "artifact_reason": current_reason,
                 })
                 continue
 
@@ -303,6 +306,7 @@ class StateClassifier:
                     "state_confidence": 1.0,
                     "state": current_state,
                     "artifact_risk": current_risk,
+                    "artifact_reason": current_reason,
                 })
                 continue
 
@@ -333,6 +337,7 @@ class StateClassifier:
                 "state_confidence": float(best_prob),
                 "state": best_state,
                 "artifact_risk": current_risk,
+                    "artifact_reason": current_reason,
             })
 
         result = pd.DataFrame(confidences_all)

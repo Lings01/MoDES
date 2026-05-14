@@ -228,12 +228,12 @@ def plot_network(results, min_confidence: float = 0.5) -> "plt.Figure":
     G = nx.Graph()
 
     top_events = results.event_table[
-        results.event_table["confidence"] >= min_confidence
+        results.event_table["state_confidence"] >= min_confidence
     ]
 
     # Show top events only
     if len(top_events) > 100:
-        top_events = top_events.nlargest(50, "confidence")
+        top_events = top_events.nlargest(50, "state_confidence")
 
     for _, row in top_events.iterrows():
         gene_node = f"g:{row['gene']}"

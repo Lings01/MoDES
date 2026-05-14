@@ -235,7 +235,7 @@ class EffectEstimator:
                 "alpha_estimated": getattr(res, "_modes_alpha_estimated", False),
                 "converged": bool(getattr(res, "converged", False)),
                 "dropped_covariates": getattr(res, "_modes_dropped_covariates", False),
-                "warning": "",
+                "warning": getattr(res, "_modes_warning", ""),
             }
 
         if result is None:
@@ -400,6 +400,11 @@ def _safe_fit_nb_glm(
         result3._modes_alpha = None
         result3._modes_alpha_estimated = False
         result3._modes_dropped_covariates = False
+        if not getattr(result3, "converged", False):
+            result3._modes_warning = (
+                "Poisson fallback did not converge; "
+                "coefficients are returned with caution."
+            )
         return result3
 
     except Exception as e:

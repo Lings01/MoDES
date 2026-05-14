@@ -1,532 +1,191 @@
-Lings，下面是这一轮的修改 list。我按优先级排好了。你可以一条一条改。
+Lings，下面是针对 49a8e2e 这一版的修改清单。我按优先级排好了，每条都写了：位置、问题、怎么改、验收标准。
+
+当前 README 已经把 v0.1.0 定位成 RNA+ATAC only、binary condition、bulk 或外部 pseudobulk 推荐，并且输出表文档里写的是 state_confidence、artifact_risk、artifact_reason、event_pval、event_fdr。但源码里还有几处和这个设计不完全一致。 ￼
 
 ⸻
 
 第一优先级：必须先改
 
-⸻
-
-1. 把 artifact_risk 写入最终 event_table
+1. 全仓库统一：confidence → state_confidence
 
 位置：
 
 modes/_types.py
 modes/core.py
 modes/report.py
+modes/plotting.py
 tests/
+README.md
 
 问题：
 
-现在 StateClassifier.classify() 已经生成了：
+README 里的主输出字段写的是：
 
-state
-state_confidence
-artifact_risk
-
-但是 _assemble_results() 只把：
-
-state
 state_confidence
 
-写入 EventResult，没有把 artifact_risk 带到最终 event_table.tsv。
+但是 core.py 里的 _event_result_columns() 仍然输出：
 
-这会导致 README 说有 artifact_risk，但用户实际输出里看不到。
+"state", "confidence", "quality_score"
 
-⸻
+也就是说，用户看 README 会找 state_confidence，但真实 event_table.tsv 里是 confidence。 ￼
 
-怎么改
+怎么改：
 
 1.1 修改 EventResult
 
-在 modes/_types.py 里给 EventResult 增加字段：
+在 modes/_types.py 里，把：
 
-artifact_risk: str = "low"
-artifact_reason: str = ""
-
-例如：
-
-@dataclass
-class EventResult:
-    event_id: str
-    gene: str
-    peak_id: str
-    state: str
-    state_confidence: float
-    artifact_risk: str = "low"
-    artifact_reason: str = ""
-    atac_effect: float = np.nan
-    atac_pval: float = np.nan
-    atac_fdr: float = np.nan
-    rna_effect: float = np.nan
-    rna_pval: float = np.nan
-    rna_fdr: float = np.nan
-    rna_after_atac_effect: float = np.nan
-    rna_after_atac_pval: float = np.nan
-    rna_after_atac_fdr: float = np.nan
-
-按你现有字段顺序合并即可，不一定照搬这个完整顺序。
-
-⸻
-
-1.2 修改 _event_result_columns()
-
-在 modes/core.py 里找到事件表字段列表，加入：
-
-"artifact_risk",
-"artifact_reason",
-
-例如：
-
-def _event_result_columns(self) -> List[str]:
-    return [
-        "event_id",
-        "gene",
-        "peak_id",
-        "state",
-        "state_confidence",
-        "artifact_risk",
-        "artifact_reason",
-        "atac_effect",
-        "atac_pval",
-        "atac_fdr",
-        "rna_effect",
-        "rna_pval",
-        "rna_fdr",
-        "rna_after_atac_effect",
-        "rna_after_atac_pval",
-        "rna_after_atac_fdr",
-    ]
-
-⸻
-
-1.3 修改 _assemble_results()
-
-现在你大概有类似逻辑：
-
-state = state_row.iloc[0]["state"]
-confidence = state_row.iloc[0]["state_confidence"]
+confidence: float
 
 改成：
 
-state = state_row.iloc[0]["state"]
+state_confidence: float
+
+1.2 修改 core.py
+
+把 _event_result_columns() 里的：
+
+"state", "confidence", "quality_score",
+
+改成：
+
+"state", "state_confidence", "quality_score",
+
+在 _assemble_results() 里，把类似：
+
 confidence = state_row.iloc[0]["state_confidence"]
-artifact_risk = state_row.iloc[0].get("artifact_risk", "low")
-artifact_reason = state_row.iloc[0].get("artifact_reason", "")
 
-然后构造 EventResult 时传进去：
+构造 EventResult 时改成：
 
-event_result = EventResult(
-    event_id=event_id,
-    gene=gene,
-    peak_id=peak_id,
-    state=state,
-    state_confidence=confidence,
-    artifact_risk=artifact_risk,
-    artifact_reason=artifact_reason,
+state_confidence=confidence
+
+或者直接：
+
+state_confidence = state_row.iloc[0]["state_confidence"]
+
+然后：
+
+EventResult(
+    ...
+    state_confidence=state_confidence,
     ...
 )
 
+1.3 修改所有使用 confidence 的地方
+
+搜索：
+
+grep -R "\bconfidence\b" modes tests
+
+重点改这些：
+
+row["confidence"]
+event_table["confidence"]
+nlargest(..., "confidence")
+df["confidence"] >= min_confidence
+
+改成：
+
+row["state_confidence"]
+event_table["state_confidence"]
+nlargest(..., "state_confidence")
+df["state_confidence"] >= min_confidence
+
+min_confidence 参数名可以保留，因为它是用户传入阈值；但内部过滤列应使用 state_confidence。
+
+验收标准：
+
+assert "state_confidence" in result.event_table.columns
+assert "confidence" not in result.event_table.columns
+
+README、测试、report、GraphML、plotting 都使用同一个字段名：
+
+state_confidence
+
 ⸻
 
-1.4 修改 report 显示字段
-
-在 modes/report.py 里显示 event table 的列中加入：
-
-"artifact_risk"
-
-如果版面允许，也加入：
-
-"artifact_reason"
-
-⸻
-
-验收标准
-
-新增测试：
-
-def test_event_table_contains_artifact_risk():
-    result = modes.run()
-    assert "artifact_risk" in result.event_table.columns
-    assert "artifact_reason" in result.event_table.columns
-
-⸻
-
-2. 删除 artifact_like 作为主 state 的逻辑
+2. EB 阶段保留 artifact_reason
 
 位置：
 
 modes/states.py
-tests/test_states.py
-README.md
-modes/report.py
 
 问题：
 
-你现在的设计已经变成两层：
+rule-based 阶段已经生成了：
 
-biological state
 artifact_risk
+artifact_reason
 
-这是对的。
+但是 _empirical_bayes_classify() 里只保留了 artifact_risk，没有保留 artifact_reason。所以只要 EB 生效，artifact_reason 就会丢失。states.py 里当前 biological state 和 artifact risk 的分层设计已经是对的，但 EB 分支还没有完整传递 artifact_reason。 ￼
 
-但是 states.py 里仍然可能返回：
+怎么改：
 
-state = artifact_like
+2.1 空 evidence 返回时加列
 
-这会导致状态体系混乱。
+把：
 
-最终建议是：
+return pd.DataFrame(columns=[
+    "event_id",
+    "state",
+    "state_confidence",
+    "artifact_risk",
+])
 
-state:
-  concordant
-  chromatin_primed
-  rna_only
-  discordant_opposite
-  null
-artifact_risk:
-  low
-  medium
-  high
+改成：
 
-不要再让 artifact_like 成为主状态。
+return pd.DataFrame(columns=[
+    "event_id",
+    "state",
+    "state_confidence",
+    "artifact_risk",
+    "artifact_reason",
+])
 
-⸻
+2.2 _empirical_bayes_classify() 中保留 reason
 
-怎么改
+在循环里加：
 
-在 modes/states.py 里，把主状态分类逻辑改成：
+current_reason = states.iloc[i].get("artifact_reason", "")
 
-if atac_sig and rna_sig and same_dir:
-    state = "concordant"
-elif atac_sig and rna_sig and not same_dir:
-    state = "discordant_opposite"
-elif atac_sig and not rna_sig:
-    state = "chromatin_primed"
-elif not atac_sig and rna_sig:
-    state = "rna_only"
-else:
-    state = "null"
+然后每个 append 分支都加入：
 
-单独计算 artifact：
-
-artifact_risk, artifact_reason = self._compute_artifact_risk(row)
+"artifact_reason": current_reason,
 
 例如：
 
-def _compute_artifact_risk(self, row: pd.Series) -> tuple[str, str]:
-    reasons = []
-    quality_score = row.get("quality_score", 1.0)
-    atac_sig = row.get("atac_fdr", 1.0) < self.fdr_threshold
-    rna_sig = row.get("rna_fdr", 1.0) < self.fdr_threshold
-    if quality_score < self.low_quality_threshold:
-        reasons.append("low_quality_score")
-    if quality_score < self.low_quality_threshold and (atac_sig ^ rna_sig):
-        reasons.append("single_modality_low_quality")
-    if len(reasons) == 0:
-        return "low", ""
-    if "single_modality_low_quality" in reasons:
-        return "high", ";".join(reasons)
-    return "medium", ";".join(reasons)
+confidences_all.append({
+    "event_id": row["event_id"],
+    "state_confidence": float(best_prob),
+    "state": best_state,
+    "artifact_risk": current_risk,
+    "artifact_reason": current_reason,
+})
 
-如果你现在已有 _compute_artifact_risk()，就不要新建，直接调整现有函数。
+无效 evidence 分支也一样：
 
-⸻
+confidences_all.append({
+    "event_id": row["event_id"],
+    "state_confidence": 1.0,
+    "state": current_state,
+    "artifact_risk": current_risk,
+    "artifact_reason": current_reason,
+})
 
-测试要改
+验收标准：
 
-原来如果测试允许：
+新增测试：
 
-assert state in {"artifact_like", "chromatin_primed"}
-
-改成：
-
-assert row["state"] == "chromatin_primed"
-assert row["artifact_risk"] == "high"
-
-或者 RNA-only 情况：
-
-assert row["state"] == "rna_only"
-assert row["artifact_risk"] == "high"
+def test_empirical_bayes_preserves_artifact_reason():
+    classifier = StateClassifier(use_empirical_bayes=True)
+    states = classifier.classify(evidence_df_with_low_quality_event)
+    assert "artifact_reason" in states.columns
+    row = states.loc[states["event_id"] == "e_low_quality"].iloc[0]
+    assert row["artifact_reason"] != ""
 
 ⸻
 
-验收标准
-
-全仓库搜索：
-
-grep -R "artifact_like" .
-
-理想情况下只允许在 changelog 或旧版本说明里出现，不应在主逻辑、主状态列表、测试断言、CSS class 中继续出现。
-
-⸻
-
-3. 修 Poisson fallback 被误标成 NB 的问题
-
-位置：
-
-modes/effects.py
-
-问题：
-
-_safe_fit_nb_glm() 里有多层 fallback：
-
-NB default
-NB alpha=1
-Poisson fallback
-simplified NB fallback
-
-但是外层 model_summary 可能仍然统一标成：
-
-family = negative_binomial
-model_used = nb_fixed_alpha
-
-如果实际用了 Poisson，却报告成 NB，这是不准确的。
-
-⸻
-
-怎么改
-
-在 _safe_fit_nb_glm() 每个成功分支上给 result 挂诊断属性。
-
-NB default 分支
-
-result._modes_model_used = "nb_default_alpha"
-result._modes_family = "negative_binomial"
-result._modes_alpha = None
-result._modes_alpha_estimated = False
-result._modes_dropped_covariates = False
-
-NB alpha=1 分支
-
-result._modes_model_used = "nb_fixed_alpha"
-result._modes_family = "negative_binomial"
-result._modes_alpha = 1.0
-result._modes_alpha_estimated = False
-result._modes_dropped_covariates = False
-
-Poisson fallback 分支
-
-result._modes_model_used = "poisson_fallback"
-result._modes_family = "poisson"
-result._modes_alpha = None
-result._modes_alpha_estimated = False
-result._modes_dropped_covariates = False
-
-simplified fallback 分支
-
-result._modes_model_used = "nb_simple_fallback"
-result._modes_family = "negative_binomial"
-result._modes_alpha = 1.0
-result._modes_alpha_estimated = False
-result._modes_dropped_covariates = True
-
-⸻
-
-然后在 _fit_nb_glm() 里生成 summary
-
-model_summary = {
-    "family": getattr(result, "_modes_family", "unknown"),
-    "model_used": getattr(result, "_modes_model_used", "unknown"),
-    "alpha": getattr(result, "_modes_alpha", None),
-    "alpha_estimated": getattr(result, "_modes_alpha_estimated", False),
-    "dropped_covariates": getattr(result, "_modes_dropped_covariates", False),
-    "converged": bool(getattr(result, "converged", True)),
-}
-
-⸻
-
-验收标准
-
-每个 ModalityEffect.model_summary 都能准确说明：
-
-family
-model_used
-alpha
-alpha_estimated
-dropped_covariates
-converged
-
-尤其是 Poisson fallback 时必须显示：
-
-model_used = poisson_fallback
-family = poisson
-
-⸻
-
-4. 无效 coefficient 早退时不要丢 model_summary
-
-位置：
-
-modes/effects.py
-
-问题：
-
-现在如果出现：
-
-np.isnan(coef)
-np.isnan(se)
-se <= 0
-
-你会提前返回一个 failed effect，但这个分支可能没有带上 model_summary。
-
-这样用户只知道失败了，不知道：
-
-用的什么模型
-是不是 Poisson fallback
-是不是 simplified fallback
-是不是 dropped covariates
-
-⸻
-
-怎么改
-
-在无效 coefficient 分支里也构造 summary：
-
-if np.isnan(coef) or np.isnan(se) or se <= 0:
-    model_summary = {
-        "family": getattr(result, "_modes_family", "unknown"),
-        "model_used": getattr(result, "_modes_model_used", "unknown"),
-        "alpha": getattr(result, "_modes_alpha", None),
-        "alpha_estimated": getattr(result, "_modes_alpha_estimated", False),
-        "dropped_covariates": getattr(result, "_modes_dropped_covariates", False),
-        "converged": False,
-        "warning": "Invalid coefficient or standard error.",
-    }
-    return ModalityEffect(
-        feature_id=feature_id,
-        coefficient=np.nan,
-        standard_error=np.nan,
-        pvalue=1.0,
-        fdr=1.0,
-        direction=0,
-        convergence=False,
-        model_summary=model_summary,
-    )
-
-字段名按你现有 ModalityEffect 定义调整。
-
-⸻
-
-验收标准
-
-失败的 feature 也有：
-
-model_summary["model_used"]
-model_summary["warning"]
-model_summary["converged"] == False
-
-⸻
-
-5. decompose.py 不要吞掉 NotImplementedError / ValueError
-
-位置：
-
-modes/decompose.py
-
-问题：
-
-_fit_conditional() 里有宽泛的：
-
-except Exception:
-    return self._null_conditional(...)
-
-这可能吞掉本来应该暴露给用户的错误，例如：
-
-multi-class condition not supported
-rank deficient design
-invalid design matrix
-
-这些不应该被变成 null result。
-
-⸻
-
-怎么改
-
-把 validation error 放出来：
-
-try:
-    ...
-except (NotImplementedError, ValueError):
-    raise
-except Exception as e:
-    return self._null_conditional(
-        event_id=event_id,
-        gene=gene,
-        peak_id=peak_id,
-        reason=str(e),
-    )
-
-或者更稳：
-
-X, design_info = self._build_design_matrix(...)
-
-放到 try 外面，避免设计矩阵错误被吞掉。
-
-⸻
-
-验收标准
-
-多类别 condition 时：
-
-with pytest.raises(NotImplementedError):
-    decomposer.decompose(...)
-
-rank deficient design 时：
-
-with pytest.raises(ValueError, match="rank deficient"):
-    decomposer.decompose(...)
-
-不能静默返回 null conditional result。
-
-⸻
-
-6. 修 report summary card 的 label/value 顺序
-
-位置：
-
-modes/report.py
-
-问题：
-
-你现在可能是：
-
-cards_data = [
-    ("Total Events", str(len(self.result.event_table))),
-    ...
-]
-for value, label in cards_data:
-    ...
-
-这会把 "Total Events" 当成 value，把数字当成 label。
-
-⸻
-
-怎么改
-
-改成：
-
-for label, value in cards_data:
-    summary_cards += f"""
-    <div class="card">
-        <div class="value">{_esc(value)}</div>
-        <div class="label">{_esc(label)}</div>
-    </div>
-    """
-
-⸻
-
-验收标准
-
-报告里应该显示：
-
-大数字 / 统计值
-下面是 Total Events / Concordant / Primed 等标签
-
-不能反过来。
-
-⸻
-
-7. integration test 改成严格断言具体状态
+3. integration test 严格检查三种核心状态
 
 位置：
 
@@ -534,85 +193,233 @@ tests/test_integration.py
 
 问题：
 
-当前测试如果允许：
+现在 integration test 对 concordant 已经比较严格，但对 chromatin_primed 和 rna_only 仍然比较宽松，例如允许 primed 不是 null/rna_only，或者允许 RNA-only 被判成 discordant_opposite。这样不能证明工具真的恢复了 ground truth state。 ￼
 
-assert conc_state in {"concordant", "discordant_opposite"}
-assert primed_state in {"chromatin_primed", "rna_only", "concordant", "discordant_opposite"}
-assert rna_state in {"rna_only", "discordant_opposite"}
+怎么改：
 
-这个太宽松，不能证明方法真的能恢复 ground truth。
-
-⸻
-
-怎么改
-
-把 synthetic data 设计得更强，然后断言写死：
+把测试目标改成明确断言：
 
 assert conc_state == "concordant"
 assert primed_state == "chromatin_primed"
 assert rna_state == "rna_only"
 
-如果随机性导致不稳定，优先调整模拟数据：
+如果当前 synthetic data 不稳定，不要放宽断言，而是调整模拟数据：
 
-增加 sample size
+增加 sample 数量
 增加 effect size
-降低噪声
+降低随机噪声
 固定 random seed
-降低 threshold 的边界敏感性
+让 primed 的 RNA 在两组完全同分布
+让 rna_only 的 ATAC 在两组完全同分布
 
-不要用过宽断言让测试通过。
+当前测试里如果 fdr_threshold=0.5 太松，建议改回：
+
+fdr_threshold=0.1
+
+或在模拟数据里把效应做得更强。
+
+验收标准：
+
+至少有一个 integration test 同时通过：
+
+assert conc_state == "concordant"
+assert primed_state == "chromatin_primed"
+assert rna_state == "rna_only"
 
 ⸻
 
-验收标准
+4. 删除 artifact_like 残留
 
-至少有一个 integration test 明确检查：
+位置：
 
-concordant → concordant
-chromatin_primed → chromatin_primed
-rna_only → rna_only
+modes/report.py
+tests/
+README.md
+
+问题：
+
+当前主状态体系已经改成：
+
+concordant
+chromatin_primed
+rna_only
+discordant_opposite
+null
+
+artifact_like 不应该再作为主 state 出现。states.py 里 biological states 已经不含 artifact_like，这是对的；但 report 或测试里如果还有残留，会让体系混乱。 ￼
+
+怎么改：
+
+全仓库搜索：
+
+grep -R "artifact_like" .
+
+主逻辑、CSS、测试断言里都不要再出现。
+
+report.py 里如果有：
+
+ALLOWED_STATES = {
+    "concordant",
+    "chromatin_primed",
+    "rna_only",
+    "discordant_opposite",
+    "artifact_like",
+    "null",
+}
+
+改成：
+
+ALLOWED_STATES = {
+    "concordant",
+    "chromatin_primed",
+    "rna_only",
+    "discordant_opposite",
+    "null",
+}
+
+如果 CSS 里还有：
+
+.artifact_like
+
+删除它。
+
+保留 artifact risk 的 CSS：
+
+.artifact-risk-low
+.artifact-risk-medium
+.artifact-risk-high
+
+验收标准：
+
+grep -R "artifact_like" modes tests README.md
+
+主代码和测试中应无结果。
+
+⸻
+
+5. min_event_fdr 改名
+
+位置：
+
+modes/core.py
+tests/
+README.md
+
+问题：
+
+如果函数参数叫：
+
+min_event_fdr
+
+但逻辑是：
+
+df = df[df["event_fdr"] < min_event_fdr]
+
+那它实际意思是“最大允许 FDR 阈值”，不是“最小 event FDR”。
+
+怎么改：
+
+把参数改成：
+
+max_event_fdr: Optional[float] = None
+
+或者：
+
+event_fdr_threshold: Optional[float] = None
+
+推荐：
+
+max_event_fdr
+
+示例：
+
+def filter(
+    self,
+    states: Optional[List[str]] = None,
+    min_confidence: Optional[float] = None,
+    max_event_fdr: Optional[float] = None,
+    exclude_high_artifact: bool = False,
+):
+    df = self.event_table.copy()
+    if states is not None:
+        df = df[df["state"].isin(states)]
+    if min_confidence is not None and "state_confidence" in df.columns:
+        df = df[df["state_confidence"] >= min_confidence]
+    if max_event_fdr is not None and "event_fdr" in df.columns:
+        df = df[df["event_fdr"] <= max_event_fdr]
+    if exclude_high_artifact and "artifact_risk" in df.columns:
+        df = df[df["artifact_risk"] != "high"]
+    return MoDESResult(
+        event_table=df,
+        ...
+    )
+
+验收标准：
+
+测试：
+
+filtered = result.filter(max_event_fdr=0.1)
+assert (filtered.event_table["event_fdr"] <= 0.1).all()
+
+旧参数 min_event_fdr 不再出现。
 
 ⸻
 
 第二优先级：建议这一轮一起改
 
-⸻
-
-8. 给无法解析坐标的 genes / peaks 加 warning
+6. events.py 加 gene / peak 坐标解析覆盖率 warning
 
 位置：
 
 modes/events.py
+tests/test_events.py
 
 问题：
 
-现在如果没有 external links，代码会尝试从 gene name 或 annotation 推坐标。完全生成不了 events 时已经会报错，这是好的。
-
-但是还有一种情况：
+如果没有 external_links，工具会根据 gene 坐标和 peak 坐标生成 candidate events。现在完全没有 events 时会报错，这已经很好。但还有一种情况：
 
 1000 个 genes
-只有 120 个能解析坐标
+只有 100 个能解析坐标
 最后生成了一些 events
 所以不会报错
-但 880 个 genes 被静默丢掉
+但 900 个 genes 静默缺失
 
-这会让用户以为全部基因都参与了 event generation。
+用户可能不知道大量基因或 peaks 没参与 event generation。
 
-⸻
+怎么改：
 
-怎么改
+在 coordinate-based event generation 中统计：
 
-在构建 TSS map 或解析 peak interval 时统计失败数量。
+无法解析坐标的 genes 数量
+无法解析 interval 的 peaks 数量
 
-例如：
+示例：
+
+import warnings
+n_total_peaks = len(peak_names)
+n_unknown_peaks = (peak_df["chr"] == "unknown").sum()
+if n_unknown_peaks > 0:
+    warnings.warn(
+        f"{n_unknown_peaks}/{n_total_peaks} peaks could not be parsed as genomic intervals. "
+        "They may be excluded from coordinate-based event generation.",
+        UserWarning,
+    )
+
+gene 也类似：
 
 n_total_genes = len(gene_names)
 n_missing_genes = 0
-for g in gene_names:
-    if g not in tss_map or tss_map[g][1] == "":
+for gene in gene_names:
+    tss_info = self._tss_map.get(gene)
+    if tss_info is None:
         n_missing_genes += 1
+        continue
+    chrom = tss_info[1]
+    if chrom in {"", "unknown", None}:
+        n_missing_genes += 1
+        continue
 
-然后：
+最后：
 
 if n_missing_genes > 0:
     warnings.warn(
@@ -622,453 +429,270 @@ if n_missing_genes > 0:
         UserWarning,
     )
 
-peak 也类似：
-
-if n_unparsed_peaks > 0:
-    warnings.warn(
-        f"{n_unparsed_peaks}/{n_total_peaks} peaks could not be parsed as genomic intervals.",
-        UserWarning,
-    )
-
-⸻
-
-验收标准
+验收标准：
 
 新增测试：
 
 def test_unannotated_genes_warn():
     with pytest.warns(UserWarning, match="genes have no genomic coordinates"):
-        builder.build(...)
+        builder.build(
+            gene_names=["STAT1", "GZMB"],
+            peak_names=["chr1:100-200"],
+            external_links=None,
+            genome_annotation=None,
+            tss_map=None,
+        )
 
 ⸻
 
-9. 清理 artifact_like 的 CSS、测试、文档残留
+7. Poisson fallback 不收敛时给 warning 或继续 fallback
 
 位置：
 
-modes/report.py
-README.md
-tests/
-docs if any
-
-问题：
-
-如果你采用：
-
-state + artifact_risk
-
-双层体系，就不应该再给 artifact_like 一个主状态 CSS。
-
-⸻
-
-怎么改
-
-删除或停用：
-
-.artifact_like
-
-新增：
-
-.artifact-risk-low {
-    color: #2e7d32;
-}
-.artifact-risk-medium {
-    color: #ef6c00;
-}
-.artifact-risk-high {
-    color: #c62828;
-    font-weight: bold;
-}
-
-报告表格中 artifact_risk 可以这样渲染：
-
-risk = str(row.get("artifact_risk", "low"))
-risk_class = f"artifact-risk-{risk}" if risk in {"low", "medium", "high"} else "artifact-risk-low"
-
-⸻
-
-验收标准
-
-全仓库搜索：
-
-grep -R "artifact_like" .
-
-主逻辑中不再出现。
-
-⸻
-
-10. 增加 event-level p-value / FDR
-
-位置：
-
-modes/core.py
-modes/states.py
-modes/_types.py
-tests/
-
-问题：
-
-现在主要有：
-
-atac_fdr
-rna_fdr
-rna_after_atac_fdr
-state_confidence
-
-但最终 event state 本身没有一个统一的：
-
-event_pval
-event_fdr
-
-一个 gene 连很多 peaks 时，RNA FDR 会被复制到很多 events，容易让 event 数量看起来膨胀。
-
-⸻
-
-怎么改，最小版本
-
-在 _assemble_results() 里，根据 state 计算 event p-value：
-
-if state == "concordant":
-    event_pval = max(atac_pval, rna_pval)
-elif state == "discordant_opposite":
-    event_pval = max(atac_pval, rna_pval)
-elif state == "chromatin_primed":
-    event_pval = atac_pval
-elif state == "rna_only":
-    event_pval = rna_pval
-else:
-    event_pval = 1.0
-
-然后对所有 events 的 event_pval 做 BH：
-
-event_fdr = benjamini_hochberg(event_pvals)
-
-⸻
-
-修改字段
-
-EventResult 增加：
-
-event_pval: float = 1.0
-event_fdr: float = 1.0
-
-event_table 输出增加：
-
-event_pval
-event_fdr
-
-⸻
-
-验收标准
-
-assert "event_pval" in result.event_table.columns
-assert "event_fdr" in result.event_table.columns
-assert result.event_table["event_fdr"].between(0, 1).all()
-
-⸻
-
-11. 增加 model_diagnostics.tsv
-
-位置：
-
-modes/core.py
 modes/effects.py
-modes/decompose.py
-tests/
+tests/test_effects.py
 
 问题：
 
-现在 to_tsv() 输出主要是：
+现在 Poisson fallback 分支会标记：
 
-event_table.tsv
-event_state_confidence.tsv
-event_layer_effects.tsv
-event_evidence_vectors.tsv
-run_params.json
+model_used = poisson_fallback
+family = poisson
 
-但是用户还不知道每个 feature 最终用了什么模型。
+这个已经比之前正确。但如果 Poisson 也没有收敛，当前代码可能仍然返回结果，只是在 summary 里显示 converged=False。这可能让用户误用不收敛的 coefficient。
+
+怎么改，二选一：
+
+方案 A：严格版，未收敛就继续 fallback
+
+result3 = model3.fit(...)
+if getattr(result3, "converged", False):
+    result3._modes_model_used = "poisson_fallback"
+    result3._modes_family = "poisson"
+    result3._modes_alpha = None
+    result3._modes_alpha_estimated = False
+    result3._modes_dropped_covariates = False
+    return result3
+
+如果没收敛，继续走 simplified fallback。
+
+方案 B：宽松版，保留但写 warning
+
+result3._modes_warning = ""
+if not getattr(result3, "converged", False):
+    result3._modes_warning = (
+        "Poisson fallback did not converge; coefficients are returned with caution."
+    )
+
+然后 model_summary 里加入：
+
+"warning": getattr(result, "_modes_warning", "")
+
+建议：
+
+MVP 用方案 B 即可，因为有些真实 GLM 不收敛但仍能给近似结果。关键是不要静默。
+
+验收标准：
+
+model_diagnostics.tsv 中如果 Poisson fallback 未收敛，应出现：
+
+model_used = poisson_fallback
+converged = False
+warning = Poisson fallback did not converge...
 
 ⸻
 
-怎么改
+8. 明确 model_diagnostics.tsv 是否包含 conditional decomposition
 
-新增一个 diagnostics table：
+位置：
 
-model_diagnostics.tsv
+modes/core.py
+modes/decompose.py
+README.md
 
-字段建议：
+问题：
 
-feature_id
-modality
-model_used
-family
-alpha
-alpha_estimated
-converged
-dropped_covariates
-warning
+现在 model_diagnostics.tsv 主要来自 ATAC 和 RNA 主效应模型；但 MoDES 还有 RNA_after_ATAC 条件分解。用户看到 model_diagnostics.tsv 可能会以为里面包含所有模型诊断。
+
+两种改法：
+
+方案 A：文档说明当前只包含 marginal GLM
+
+README 里加一句：
+
+model_diagnostics.tsv currently reports marginal ATAC and RNA GLM diagnostics.
+Conditional RNA-after-ATAC diagnostics are summarized in event_table.tsv and will be expanded in a future version.
+
+方案 B：把 conditional model 也加入 diagnostics
+
+在 decompose.py 的 conditional result 中增加：
+
+conditional_model_used
+conditional_family
+conditional_converged
+conditional_warning
+
+在 core.py 的 _build_model_diagnostics() 中加入：
+
+for _, row in self.conditional_effects.iterrows():
+    diagnostic_rows.append({
+        "feature_id": row["event_id"],
+        "modality": "RNA_after_ATAC",
+        "model_used": row.get("model_used", "conditional_nb"),
+        "family": row.get("family", "negative_binomial"),
+        "alpha": row.get("alpha", None),
+        "alpha_estimated": row.get("alpha_estimated", False),
+        "converged": row.get("convergence", False),
+        "dropped_covariates": row.get("dropped_covariates", False),
+        "warning": row.get("warning", ""),
+    })
+
+建议：
+
+先做方案 A，后续再补方案 B。
+
+验收标准：
+
+README 和真实输出一致，不夸大 model_diagnostics.tsv 的覆盖范围。
 
 ⸻
 
-数据来源
+9. README 表格重新格式化成标准 Markdown
 
-从每个 ModalityEffect.model_summary 里提取。
+位置：
+
+README.md
+
+问题：
+
+README 当前内容虽然 GitHub 页面能显示，但 raw 文件中很多表格像普通文本，不是真正 Markdown table。比如“输出文件”和“event_table.tsv 字段”现在看起来是：
+
+文件 说明
+event_table.tsv 主输出表
+...
+字段 说明
+event_id 事件唯一标识
+...
+
+这在渲染、复制和维护时不如标准表格清晰。 ￼
+
+怎么改：
+
+改成标准 Markdown table。
 
 例如：
 
-diagnostic_rows = []
-for effect in self.atac_effects.values():
-    summary = effect.model_summary or {}
-    diagnostic_rows.append({
-        "feature_id": effect.feature_id,
-        "modality": "ATAC",
-        "model_used": summary.get("model_used", "unknown"),
-        "family": summary.get("family", "unknown"),
-        "alpha": summary.get("alpha", None),
-        "alpha_estimated": summary.get("alpha_estimated", False),
-        "converged": summary.get("converged", effect.convergence),
-        "dropped_covariates": summary.get("dropped_covariates", False),
-        "warning": summary.get("warning", ""),
-    })
+### 输出文件
+| 文件 | 说明 |
+|---|---|
+| `event_table.tsv` | 主输出表 |
+| `event_state_confidence.tsv` | 状态置信度 |
+| `event_layer_effects.tsv` | 每层效应大小 |
+| `event_evidence_vectors.tsv` | 证据向量 |
+| `model_diagnostics.tsv` | 模型诊断信息 |
+| `run_params.tsv` | 运行参数 |
 
-RNA 同理。
+字段表：
 
-⸻
+#### `event_table.tsv` 字段
+| 字段 | 说明 |
+|---|---|
+| `event_id` | 事件唯一标识 |
+| `gene` | target gene |
+| `peak_id` | regulatory peak |
+| `state` | biological state |
+| `state_confidence` | 状态置信度，范围 0 到 1 |
+| `artifact_risk` | 技术伪影风险，取值 `low` / `medium` / `high` |
+| `artifact_reason` | 伪影原因，分号分隔 |
+| `event_pval` | event-level p-value |
+| `event_fdr` | event-level BH-corrected FDR |
+| `atac_coef` / `atac_pval` / `atac_fdr` | ATAC 效应估计 |
+| `rna_coef` / `rna_pval` / `rna_fdr` | RNA 效应估计 |
+| `rna_after_atac_coef` / `rna_after_atac_pval` / `rna_after_atac_fdr` | 控制 linked ATAC peak 后的条件效应 |
 
-修改 MoDESResult
+验收标准：
 
-增加属性：
-
-model_diagnostics: pd.DataFrame
-
-to_tsv() 里写出：
-
-self.model_diagnostics.to_csv(outdir / "model_diagnostics.tsv", sep="\t", index=False)
-
-⸻
-
-验收标准
-
-运行：
-
-result.to_tsv("output")
-
-后出现：
-
-output/model_diagnostics.tsv
-
-并包含：
-
-model_used
-family
-converged
-dropped_covariates
+GitHub README 渲染成真正的表格，不是普通文本块。
 
 ⸻
 
-第三优先级：增强可解释性和稳定性
+第三优先级：可做可不做，但建议补上
 
-⸻
-
-12. artifact_reason 做成可解释字段
-
-位置：
-
-modes/states.py
-modes/core.py
-modes/_types.py
-modes/report.py
-
-问题：
-
-只有：
-
-artifact_risk = high
-
-还不够。用户会问：
-
-为什么 high？
-
-⸻
-
-怎么改
-
-让 _compute_artifact_risk() 返回：
-
-artifact_risk, artifact_reason
-
-artifact_reason 可以是分号分隔字符串：
-
-low_quality_score
-single_modality_low_quality
-low_atac_depth
-low_rna_depth
-batch_associated
-library_size_outlier
-
-当前可以先实现最基础的两个：
-
-low_quality_score
-single_modality_low_quality
-
-⸻
-
-示例
-
-def _compute_artifact_risk(self, row: pd.Series) -> tuple[str, str]:
-    reasons = []
-    quality_score = float(row.get("quality_score", 1.0))
-    atac_sig = float(row.get("atac_fdr", 1.0)) < self.fdr_threshold
-    rna_sig = float(row.get("rna_fdr", 1.0)) < self.fdr_threshold
-    if quality_score < self.low_quality_threshold:
-        reasons.append("low_quality_score")
-    if quality_score < self.low_quality_threshold and (atac_sig ^ rna_sig):
-        reasons.append("single_modality_low_quality")
-    if not reasons:
-        return "low", ""
-    if "single_modality_low_quality" in reasons:
-        return "high", ";".join(reasons)
-    return "medium", ";".join(reasons)
-
-⸻
-
-验收标准
-
-低质量单模态事件输出：
-
-artifact_risk = high
-artifact_reason = low_quality_score;single_modality_low_quality
-
-⸻
-
-13. 把 BIOLOGICAL_STATES 和状态分类规则完全统一
-
-位置：
-
-modes/states.py
-
-问题：
-
-如果你定义了：
-
-BIOLOGICAL_STATES = [...]
-
-就必须保证 _rule_based_classify() 只返回里面的状态。
-
-⸻
-
-怎么改
-
-定义：
-
-BIOLOGICAL_STATES = {
-    "concordant",
-    "chromatin_primed",
-    "rna_only",
-    "discordant_opposite",
-    "null",
-}
-
-在 classify 后加防御检查：
-
-if state not in BIOLOGICAL_STATES:
-    raise ValueError(f"Invalid biological state returned: {state}")
-
-⸻
-
-验收标准
-
-assert set(states["state"]).issubset(BIOLOGICAL_STATES)
-
-⸻
-
-14. 把 README 的输出表字段更新
-
-位置：
-
-README.md
-
-问题：
-
-你增加 artifact_risk、artifact_reason、event_pval、event_fdr 后，README 的示例输出表也要同步。
-
-⸻
-
-怎么改
-
-README 里的 output table 示例改成：
-
-event_id
-gene
-peak_id
-state
-state_confidence
-artifact_risk
-artifact_reason
-event_pval
-event_fdr
-atac_effect
-rna_effect
-rna_after_atac_effect
-
-并解释：
-
-state: inferred biological event state
-artifact_risk: technical-risk flag, not a biological state
-artifact_reason: semicolon-separated reasons for artifact risk
-event_fdr: event-level multiple-testing-adjusted significance
-
-⸻
-
-验收标准
-
-README 和真实 event_table.tsv 字段一致。
-
-⸻
-
-15. filter() 支持 artifact risk 过滤
+10. filter() 增加 artifact risk 过滤
 
 位置：
 
 modes/core.py
+tests/test_core.py
 
 问题：
 
-现在 MoDESResult.filter() 支持按 confidence 和 state 过滤，但最好支持去掉高 artifact risk。
+既然现在有 artifact_risk，用户很可能想筛掉高风险事件。
 
-⸻
+怎么改：
 
-怎么改
+给 MoDESResult.filter() 增加：
 
-给 filter() 增加参数：
-
-max_artifact_risk: Optional[str] = None
 exclude_high_artifact: bool = False
+max_artifact_risk: Optional[str] = None
 
-简单实现：
+简单版：
 
-if exclude_high_artifact and "artifact_risk" in filtered.columns:
-    filtered = filtered[filtered["artifact_risk"] != "high"]
+if exclude_high_artifact and "artifact_risk" in df.columns:
+    df = df[df["artifact_risk"] != "high"]
 
-或者更通用：
+更通用版：
 
 risk_order = {"low": 0, "medium": 1, "high": 2}
-if max_artifact_risk is not None:
+if max_artifact_risk is not None and "artifact_risk" in df.columns:
     max_rank = risk_order[max_artifact_risk]
-    filtered = filtered[
-        filtered["artifact_risk"].map(risk_order).fillna(0) <= max_rank
+    df = df[
+        df["artifact_risk"].map(risk_order).fillna(0) <= max_rank
     ]
 
-⸻
-
-验收标准
+验收标准：
 
 filtered = result.filter(exclude_high_artifact=True)
 assert "high" not in set(filtered.event_table["artifact_risk"])
 
 ⸻
 
-16. to_report() 里增加 artifact risk summary
+11. GraphML 里加入 artifact_risk、event_fdr
+
+位置：
+
+modes/core.py
+
+问题：
+
+如果用户把结果导出到 Cytoscape / Gephi，最好能在网络边属性里看到：
+
+state
+state_confidence
+artifact_risk
+event_fdr
+
+怎么改：
+
+在 to_graphml() 的 edge attributes 里加入：
+
+artifact_risk=row.get("artifact_risk", "low"),
+artifact_reason=row.get("artifact_reason", ""),
+event_pval=float(row.get("event_pval", 1.0)),
+event_fdr=float(row.get("event_fdr", 1.0)),
+state_confidence=float(row.get("state_confidence", np.nan)),
+
+验收标准：
+
+导出的 GraphML edge 属性中包含：
+
+artifact_risk
+event_fdr
+state_confidence
+
+⸻
+
+12. report 中按 state_confidence 排序
 
 位置：
 
@@ -1076,57 +700,56 @@ modes/report.py
 
 问题：
 
-报告现在主要总结 state distribution，最好也总结 artifact risk distribution。
+如果你完成第 1 条，把主字段改成 state_confidence，report 里所有排序和显示也要同步。
+
+怎么改：
+
+top_events = results.event_table.nlargest(50, "state_confidence")
+
+display columns：
+
+display_cols = [
+    "event_id",
+    "gene",
+    "peak_id",
+    "state",
+    "state_confidence",
+    "artifact_risk",
+    "event_fdr",
+    "atac_coef",
+    "rna_coef",
+    "atac_fdr",
+    "rna_fdr",
+]
+
+验收标准：
+
+HTML report 不再引用 confidence。
 
 ⸻
 
-怎么改
+建议修改顺序
 
-增加一个 summary section：
+你这轮按这个顺序改：
 
-Artifact risk distribution:
-low: N
-medium: N
-high: N
+1. confidence → state_confidence，全仓库统一
+2. EB 阶段保留 artifact_reason
+3. integration test 严格断言 chromatin_primed 和 rna_only
+4. 删除 artifact_like 残留
+5. min_event_fdr → max_event_fdr
+6. events.py 加 gene/peak 坐标 coverage warning
+7. Poisson fallback 未收敛时写 warning
+8. README 说明 model_diagnostics.tsv 当前范围
+9. README 表格格式化
+10. filter() 支持 artifact risk 过滤
+11. GraphML 增加 artifact_risk / event_fdr / state_confidence
 
-如果有 artifact_reason，再加 top reasons：
+最少先改前 5 个：
 
-Top artifact reasons:
-low_quality_score
-single_modality_low_quality
+1. state_confidence 字段统一
+2. artifact_reason 在 EB 后不丢
+3. integration test 严格
+4. artifact_like 残留清理
+5. max_event_fdr 参数命名
 
-⸻
-
-验收标准
-
-HTML report 能看到：
-
-Artifact risk
-low / medium / high counts
-
-⸻
-
-推荐修改顺序
-
-你这一轮按这个顺序改：
-
-1. artifact_risk 写入 EventResult 和 event_table
-2. 删除 artifact_like 作为主 state
-3. artifact_reason 一起写入
-4. 修 Poisson fallback model_summary
-5. 修 invalid coefficient 早退 model_summary
-6. decompose.py 不吞 NotImplementedError / ValueError
-7. 修 report summary card 顺序
-8. integration test 改成严格状态断言
-9. 清理 artifact_like 残留
-10. README 同步输出字段
-
-如果你时间有限，最少先改这 5 个：
-
-1. artifact_risk 输出到 event_table
-2. artifact_like 不再作为 state
-3. Poisson fallback 不再误标 NB
-4. decompose.py 不吞关键错误
-5. integration test 严格检查 concordant / primed / rna_only
-
-这 5 个改完，MoDES 的状态体系和输出就会一致很多。
+这 5 个改完，49a8e2e 这一版的主要不一致就基本消掉了。

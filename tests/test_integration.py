@@ -165,7 +165,7 @@ class TestIntegration:
 
         assert len(result.event_table) > 0, "No events in output"
         assert "state" in result.event_table.columns
-        assert "confidence" in result.event_table.columns
+        assert "state_confidence" in result.event_table.columns
         assert "artifact_risk" in result.event_table.columns
         assert "event_fdr" in result.event_table.columns
         unique_states = set(result.event_table["state"])

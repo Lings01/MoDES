@@ -31,7 +31,7 @@ class TestMoDES:
         result = modes.run()
 
         expected_cols = [
-            "event_id", "gene", "peak_id", "state", "confidence",
+            "event_id", "gene", "peak_id", "state", "state_confidence",
             "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
         ]
         for col in expected_cols:
