@@ -1,30 +1,35 @@
-# Benchmarks
+# MoDES Benchmarks
 
-## simulated_event_states
-
-Synthetic benchmark evaluating MoDES state recovery against known ground truth.
+## Quick Start
 
 ```bash
-python benchmarks/simulated_event_states/run_benchmark.py
+# Synthetic event states (100% accuracy on controlled data)
+python benchmarks/simulated_event_states/run_benchmark.py --quick
+
+# Semi-real spike-in (realistic library sizes)
+python benchmarks/semi_real_spikein/run_spikein.py
+
+# Negative control (shuffled labels → expect all null)
+python benchmarks/negative_control/run_negative_control.py
+
+# Baseline comparison (MoDES vs naive overlap)
+python benchmarks/baseline_comparison/run_baseline.py
 ```
 
-Output:
-- `truth.tsv` — ground truth event states
-- `moDES_output/` — MoDES output files
-- `metrics.tsv` — per-state precision, recall, F1
+## How to Read Results
 
-### Metrics
+Each benchmark produces output files in its `output/` directory:
 
-| Metric | Description |
+| File | Description |
 |---|---|
-| Accuracy | Fraction of events correctly classified |
-| Per-state precision | TP / (TP + FP) per state |
-| Per-state recall | TP / (TP + FN) per state |
-| Per-state F1 | Harmonic mean of precision and recall |
+| `truth.tsv` | Ground truth event states |
+| `metrics.tsv` | Per-state precision, recall, F1 |
+| `confusion_matrix.tsv` | State × State confusion matrix |
+| `runtime.tsv` | Wall-clock execution time |
+| `moDES_output/event_table.tsv` | Full MoDES output |
 
-### Planned
-
-- Semi-real spike-in benchmark (real count matrices with controlled effects)
-- Negative control (shuffled labels)
-- Baseline comparison (naive overlap vs MoDES)
-- Runtime / memory profiling by data scale
+**Expected behavior:**
+- Synthetic: accuracy near 1.0 on controlled data
+- Semi-real spike-in: accuracy ≥ 0.85 with realistic noise
+- Negative control: null fraction ≥ 0.9 (shuffled labels)
+- Baseline comparison: MoDES matches or exceeds naive overlap on controlled data

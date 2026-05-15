@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="modes",
-    version="0.1.0",
+    version="0.5.0-beta",
     description="MoDES: Multi-Omics Discordance/Event State inference",
     long_description=open("README.md").read() if __import__("os").path.exists("README.md") else "",
     long_description_content_type="text/markdown",

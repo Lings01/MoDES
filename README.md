@@ -1,5 +1,7 @@
 # MoDES: Multi-Omics Discordance/Event State inference
 
+![tests](https://github.com/Lings01/MoDES/actions/workflows/tests.yml/badge.svg)
+
 A statistical framework that treats regulatory events — not genes, peaks, or clusters —
 as the primary unit of analysis. Instead of compressing multi-omics layers into a single
 embedding, MoDES uses cross-modality concordance and discordance to classify each event
@@ -81,13 +83,14 @@ preserving the biological signal while flagging quality concerns.
 
 | Capability | Status |
 |---|---|
-| RNA + ATAC two-layer analysis | ✅ Supported |
-| Binary condition comparison | ✅ Supported |
-| Bulk data input | ✅ Recommended |
-| Pseudobulk aggregation | ✅ Experimental |
-| Protein layer | 🔮 Planned (v0.2) |
-| Spatial graph | 🔮 Planned (v0.4) |
-| Multi-class condition / continuous covariate | 🔮 Planned |
+| Bulk RNA+ATAC | ✅ Supported |
+| Single-cell pseudobulk | ⚠️ Experimental |
+| Spatial region-pseudobulk | ⚠️ Experimental |
+| MuData (.h5mu) input | ⚠️ Experimental |
+| Sparse matrix aggregation | ⚠️ Experimental |
+| Native spatial graph | 🔮 Planned (v1.2) |
+| Protein layer | 🔮 Planned (v1.1) |
+| Multi-class condition | 🔮 Planned |
 | Time / pseudotime delay | 🔮 Planned |
 
 ---
