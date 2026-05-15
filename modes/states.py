@@ -225,11 +225,22 @@ class StateClassifier:
         quality_score = float(row.get("quality_score", 1.0))
         atac_sig = float(row.get("atac_fdr", 1.0)) < self.fdr_threshold
         rna_sig = float(row.get("rna_fdr", 1.0)) < self.fdr_threshold
+        z_atac = abs(float(row.get("z_atac", 0.0)))
+        z_rna = abs(float(row.get("z_rna", 0.0)))
 
+        # Quality-based
         if quality_score < self.quality_threshold:
             reasons.append("low_quality_score")
         elif quality_score < self.quality_threshold * 2:
             reasons.append("borderline_quality")
+
+        # Depth-based (low z-score with signal suggests weak evidence)
+        if z_atac < 0.5 and atac_sig:
+            reasons.append("low_atac_depth")
+        if z_rna < 0.5 and rna_sig:
+            reasons.append("low_rna_depth")
+
+        # Single-modality with low quality
         if quality_score < self.quality_threshold * 2 and (atac_sig ^ rna_sig):
             reasons.append("single_modality_low_quality")
 

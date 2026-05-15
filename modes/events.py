@@ -144,7 +144,7 @@ class EventCandidateBuilder:
                 if abs_dist <= self.promoter_window:
                     source = "promoter"
                 elif abs_dist <= self.distal_window:
-                    source = f"distal_{self.distal_window // 1000}kb"
+                    source = "distal_250kb"
                 else:
                     continue
 

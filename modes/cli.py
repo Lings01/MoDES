@@ -140,6 +140,42 @@ def _cmd_validate(args):
     except Exception as e:
         issues.append(f"Failed to load data: {e}")
 
+    report = {
+        "ok": len(issues) == 0,
+        "errors": issues,
+        "warnings": warnings_list,
+    }
+    # Add summary if data was loaded
+    try:
+        report["n_samples"] = data.n_samples
+        report["n_genes"] = data.n_genes
+        report["n_peaks"] = data.n_peaks
+    except Exception:
+        pass
+    try:
+        report["n_links"] = n_total
+        report["n_links_matched"] = n_matched
+    except Exception:
+        pass
+
+    if args.out:
+        ext = os.path.splitext(args.out)[1]
+        if ext == ".json":
+            import json
+            with open(args.out, "w") as f:
+                json.dump(report, f, indent=2)
+        else:
+            with open(args.out, "w") as f:
+                f.write("MoDES Input Validation Report\n")
+                f.write("=" * 40 + "\n")
+                f.write(f"OK: {report['ok']}\n")
+                for i in issues:
+                    f.write(f"[FAIL] {i}\n")
+                for w in warnings_list:
+                    f.write(f"[WARN] {w}\n")
+                if not issues and not warnings_list:
+                    f.write("All checks passed.\n")
+
     if issues:
         print("ISSUES:")
         for i in issues:
@@ -150,17 +186,6 @@ def _cmd_validate(args):
             print(f"  [WARN] {w}")
     if not issues and not warnings_list:
         print("All checks passed.")
-
-    if args.out:
-        with open(args.out, "w") as f:
-            f.write("MoDES Input Validation Report\n")
-            f.write("=" * 40 + "\n")
-            for i in issues:
-                f.write(f"[FAIL] {i}\n")
-            for w in warnings_list:
-                f.write(f"[WARN] {w}\n")
-            if not issues and not warnings_list:
-                f.write("All checks passed.\n")
 
 
 if __name__ == "__main__":
