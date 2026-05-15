@@ -165,13 +165,23 @@ def evaluate(truth, predicted):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="MoDES Synthetic Benchmark")
+    parser.add_argument("--quick", action="store_true", help="Quick mode: fewer events")
+    parser.add_argument("--full", action="store_true", help="Full mode: more events")
+    args = parser.parse_args()
+
+    n_events = 5 if args.quick else (20 if args.full else 10)
+    n_grp = 5 if args.quick else (12 if args.full else 8)
+
     print("=" * 60)
     print("MoDES Benchmark: Simulated Event State Recovery")
+    print(f"Mode: {'quick' if args.quick else 'full' if args.full else 'standard'}")
     print("=" * 60)
 
     t0 = time.time()
     print("\n[1/4] Generating benchmark data...")
-    data, gt, tss_map = generate_benchmark_data(n_per_group=8, n_events_per_state=10)
+    data, gt, tss_map = generate_benchmark_data(n_per_group=n_grp, n_events_per_state=n_events)
     print(f"      {len(data.gene_names)} genes, {data.n_samples} samples, {len(gt)} events")
 
     print("\n[2/4] Running MoDES...")
@@ -196,6 +206,17 @@ def main():
     gt.to_csv(os.path.join(out_dir, "truth.tsv"), sep="\t", index=False)
     result.to_tsv(os.path.join(out_dir, "moDES_output"))
     metrics_df.to_csv(os.path.join(out_dir, "metrics.tsv"), sep="\t", index=False)
+
+    # Confusion matrix
+    states_list = ["concordant", "chromatin_primed", "rna_only",
+                   "discordant_opposite", "null"]
+    cm = pd.DataFrame(0, index=states_list, columns=states_list)
+    for t, p in zip(truth, predicted):
+        if t in states_list and p in states_list:
+            cm.loc[t, p] += 1
+    cm.to_csv(os.path.join(out_dir, "confusion_matrix.tsv"), sep="\t")
+    runtime = pd.DataFrame({"runtime_seconds": [time.time() - t0]})
+    runtime.to_csv(os.path.join(out_dir, "runtime.tsv"), sep="\t", index=False)
     print(f"\nOutputs saved to: {out_dir}")
 
 

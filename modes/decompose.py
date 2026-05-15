@@ -38,12 +38,14 @@ class ConditionalDecomposition:
         donor_col: Optional[str] = None,
         batch_col: Optional[str] = None,
         contrast: Optional[tuple] = None,
+        conditional_mode: str = "single_peak",
     ):
         self.condition_col = condition_col
         self.covariate_cols = covariate_cols or []
         self.donor_col = donor_col
         self.batch_col = batch_col
         self.contrast = contrast
+        self.conditional_mode = conditional_mode
 
     def decompose(
         self,
@@ -73,25 +75,59 @@ class ConditionalDecomposition:
         records = []
         rna_ls, _ = data.get_library_sizes()
 
-        for _, event in events.iterrows():
-            gene = event["gene"]
-            peak = event["peak_id"]
+        if self.conditional_mode == "cis_score":
+            # Pre-compute per-gene cis_ATAC_score from all linked peaks
+            gene_to_peaks = {}
+            for _, event in events.iterrows():
+                g = event["gene"]
+                p = event["peak_id"]
+                dist = abs(event.get("distance_to_tss", 250000))
+                if g not in gene_to_peaks:
+                    gene_to_peaks[g] = []
+                if p in data.atac.columns:
+                    weight = 1.0 / (dist + 1)
+                    gene_to_peaks[g].append((p, weight))
 
-            if gene not in data.rna.columns or peak not in data.atac.columns:
-                records.append(
-                    self._null_record(event["event_id"])
+            # Build cis_score per sample
+            cis_scores = {}
+            for gene, peak_weights in gene_to_peaks.items():
+                total_weight = sum(w for _, w in peak_weights)
+                if total_weight == 0:
+                    continue
+                score = np.zeros(data.n_samples)
+                for peak, w in peak_weights:
+                    score += w * data.atac[peak].values / total_weight
+                cis_scores[gene] = score
+
+            for _, event in events.iterrows():
+                gene = event["gene"]
+                if gene not in data.rna.columns or gene not in cis_scores:
+                    records.append(self._null_record(event["event_id"]))
+                    continue
+                result = self._fit_conditional_cis(
+                    data=data, gene=gene, cis_score=cis_scores[gene],
+                    rna_offset=rna_ls,
+                    rna_marginal_effect=rna_effects.get(gene),
                 )
-                continue
+                result["event_id"] = event["event_id"]
+                result["cis_atac_score_method"] = "distance_weighted"
+                records.append(result)
+        else:
+            for _, event in events.iterrows():
+                gene = event["gene"]
+                peak = event["peak_id"]
 
-            result = self._fit_conditional(
-                data=data,
-                gene=gene,
-                peak=peak,
-                rna_offset=rna_ls,
-                rna_marginal_effect=rna_effects.get(gene),
-            )
-            result["event_id"] = event["event_id"]
-            records.append(result)
+                if gene not in data.rna.columns or peak not in data.atac.columns:
+                    records.append(self._null_record(event["event_id"]))
+                    continue
+
+                result = self._fit_conditional(
+                    data=data, gene=gene, peak=peak,
+                    rna_offset=rna_ls,
+                    rna_marginal_effect=rna_effects.get(gene),
+                )
+                result["event_id"] = event["event_id"]
+                records.append(result)
 
         df = pd.DataFrame(records)
 
@@ -125,6 +161,56 @@ class ConditionalDecomposition:
         df["attenuation"] = attenuations
 
         return df
+
+    def _fit_conditional_cis(
+        self,
+        data,
+        gene: str,
+        cis_score: np.ndarray,
+        rna_offset: np.ndarray,
+        rna_marginal_effect: Optional[ModalityEffect] = None,
+    ) -> dict:
+        """
+        Fit RNA_g ~ Condition + cis_ATAC_score + Covariates.
+        """
+        y = data.rna[gene].values.astype(float)
+        X_base = self._build_design_matrix(data)
+        cis_norm = cis_score / (np.mean(cis_score) if np.mean(cis_score) > 0 else 1)
+        X = np.column_stack([X_base, cis_norm])
+        offset_adj = rna_offset - np.mean(rna_offset)
+
+        try:
+            import statsmodels.api as sm
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                model = sm.GLM(endog=y, exog=X, offset=offset_adj,
+                               family=sm.families.NegativeBinomial())
+                result = model.fit(maxiter=100, disp=0)
+            if not getattr(result, "converged", False):
+                model2 = sm.GLM(endog=y, exog=X, offset=offset_adj,
+                                family=sm.families.Poisson())
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    result = model2.fit(maxiter=200, disp=0)
+            converged = getattr(result, "converged", False)
+            if converged and len(result.params) > 1:
+                coef = result.params[1]; se = result.bse[1]
+                z = coef / se if se > 0 else 0.0
+                pval = 2 * scipy_stats.norm.sf(abs(z))
+                return {
+                    "rna_after_atac_coef": float(coef),
+                    "rna_after_atac_se": float(se),
+                    "rna_after_atac_z": float(z),
+                    "rna_after_atac_pval": float(pval),
+                    "convergence": True,
+                    "atac_coef": float(result.params[-1]),
+                    "model_aic": float(result.aic),
+                }
+            return self._null_conditional()
+        except (NotImplementedError, ValueError):
+            raise
+        except Exception:
+            return self._null_conditional()
 
     def _fit_conditional(
         self,

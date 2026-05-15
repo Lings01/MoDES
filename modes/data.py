@@ -333,6 +333,32 @@ class MoDEData:
 
         return cls(rna=rna_pb, atac=atac_pb, obs=obs_agg)
 
+    @classmethod
+    def from_spatial_pseudobulk(
+        cls,
+        rna_counts,
+        atac_counts,
+        metadata,
+        region_col: str = "region",
+        sample_col: str = "sample",
+        condition_col: str = "condition",
+    ) -> "MoDEData":
+        """
+        Load spatial data aggregated to region-level pseudobulk.
+
+        Spatial support in v1.1 is region/sample-level pseudobulk analysis,
+        NOT native spatial graph modeling.
+        """
+        rna = _load_matrix(rna_counts) if isinstance(rna_counts, str) else rna_counts.copy()
+        atac = _load_matrix(atac_counts) if isinstance(atac_counts, str) else atac_counts.copy()
+        obs = _load_matrix(metadata) if isinstance(metadata, str) else metadata.copy()
+        if region_col in obs.columns and "context" not in obs.columns:
+            obs["context"] = obs[region_col].astype(str)
+        common = rna.index.intersection(atac.index).intersection(obs.index)
+        if len(common) == 0:
+            raise ValueError("No common samples across RNA, ATAC, and metadata")
+        return cls(rna=rna.loc[common], atac=atac.loc[common], obs=obs.loc[common])
+
     # -- Methods --
 
     def validate(self, condition_col: str = None) -> List[str]:
