@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from scipy import stats as scipy_stats
@@ -33,11 +33,11 @@ class EffectEstimator:
     def __init__(
         self,
         condition_col: str,
-        covariate_cols: Optional[List[str]] = None,
-        donor_col: Optional[str] = None,
-        batch_col: Optional[str] = None,
+        covariate_cols: list[str] | None = None,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
         use_empirical_bayes: bool = True,
-        contrast: Optional[tuple] = None,
+        contrast: tuple | None = None,
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
     ):
@@ -53,8 +53,8 @@ class EffectEstimator:
     def estimate_atac_effects(
         self,
         data,
-        peak_names: List[str],
-    ) -> Dict[str, ModalityEffect]:
+        peak_names: list[str],
+    ) -> dict[str, ModalityEffect]:
         """
         Estimate condition effects for ATAC peaks.
 
@@ -97,8 +97,8 @@ class EffectEstimator:
     def estimate_rna_effects(
         self,
         data,
-        gene_names: List[str],
-    ) -> Dict[str, ModalityEffect]:
+        gene_names: list[str],
+    ) -> dict[str, ModalityEffect]:
         """
         Estimate condition effects for RNA genes.
 
@@ -140,9 +140,9 @@ class EffectEstimator:
     def estimate_effects(
         self,
         data,
-        peak_names: List[str],
-        gene_names: List[str],
-    ) -> Tuple[Dict[str, ModalityEffect], Dict[str, ModalityEffect]]:
+        peak_names: list[str],
+        gene_names: list[str],
+    ) -> tuple[dict[str, ModalityEffect], dict[str, ModalityEffect]]:
         """Run both ATAC and RNA effect estimation."""
         atac_effects = self.estimate_atac_effects(data, peak_names)
         rna_effects = self.estimate_rna_effects(data, gene_names)
@@ -151,7 +151,7 @@ class EffectEstimator:
     def _build_design_matrix(
         self,
         data,
-        offset_col: Optional[str] = None,
+        offset_col: str | None = None,
     ) -> np.ndarray:
         """
         Build design matrix from data.obs.
@@ -312,9 +312,9 @@ class EffectEstimator:
 
     def _apply_eb_moderation_atac(
         self,
-        effects: Dict[str, ModalityEffect],
+        effects: dict[str, ModalityEffect],
         data,
-    ) -> Dict[str, ModalityEffect]:
+    ) -> dict[str, ModalityEffect]:
         """Apply EB variance moderation to ATAC effects."""
         keys = list(effects.keys())
         coefs = np.array([effects[k].coef for k in keys])
@@ -345,9 +345,9 @@ class EffectEstimator:
 
     def _apply_eb_moderation_rna(
         self,
-        effects: Dict[str, ModalityEffect],
+        effects: dict[str, ModalityEffect],
         data,
-    ) -> Dict[str, ModalityEffect]:
+    ) -> dict[str, ModalityEffect]:
         """Apply EB variance moderation to RNA effects."""
         # Same logic as ATAC
         return self._apply_eb_moderation_atac(effects, data)
@@ -363,7 +363,7 @@ def _safe_fit_nb_glm(
     offset: np.ndarray = None,
     allow_poisson: bool = True,
     allow_simplified: bool = False,
-) -> Optional[Any]:
+) -> Any | None:
     """
     Fit NB GLM with fallback handling.
 

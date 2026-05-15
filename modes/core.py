@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from modes._types import EventResult
 from modes.data import MoDEData
-from modes.events import EventCandidateBuilder
-from modes.effects import EffectEstimator
 from modes.decompose import ConditionalDecomposition
+from modes.effects import EffectEstimator
+from modes.events import EventCandidateBuilder
 from modes.states import EvidenceBuilder, StateClassifier
 
 
@@ -69,15 +68,15 @@ class MoDES:
         self,
         data: MoDEData,
         condition_col: str,
-        covariate_cols: Optional[List[str]] = None,
-        donor_col: Optional[str] = None,
-        batch_col: Optional[str] = None,
+        covariate_cols: list[str] | None = None,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
         fdr_threshold: float = 0.1,
-        genome_annotation: Optional[str] = None,
-        external_links: Optional[pd.DataFrame] = None,
-        motif_annotation: Optional[pd.DataFrame] = None,
-        tss_map: Optional[Dict] = None,
-        contrast: Optional[tuple] = None,
+        genome_annotation: str | None = None,
+        external_links: pd.DataFrame | None = None,
+        motif_annotation: pd.DataFrame | None = None,
+        tss_map: dict | None = None,
+        contrast: tuple | None = None,
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
         conditional_mode: str = "single_peak",
@@ -98,15 +97,15 @@ class MoDES:
         self.conditional_mode = conditional_mode
 
         # Pipeline state
-        self.events: Optional[pd.DataFrame] = None
-        self.atac_effects: Optional[Dict] = None
-        self.rna_effects: Optional[Dict] = None
-        self.conditional_effects: Optional[pd.DataFrame] = None
-        self.evidence: Optional[pd.DataFrame] = None
-        self.states: Optional[pd.DataFrame] = None
-        self.results: Optional[MoDESResult] = None
+        self.events: pd.DataFrame | None = None
+        self.atac_effects: dict | None = None
+        self.rna_effects: dict | None = None
+        self.conditional_effects: pd.DataFrame | None = None
+        self.evidence: pd.DataFrame | None = None
+        self.states: pd.DataFrame | None = None
+        self.results: MoDESResult | None = None
 
-    def run(self) -> "MoDESResult":
+    def run(self) -> MoDESResult:
         """Execute the full MoDES pipeline."""
         self.build_events()
         self.estimate_effects()
@@ -118,8 +117,8 @@ class MoDES:
 
     def build_events(
         self,
-        external_links: Optional[pd.DataFrame] = None,
-        motif_annotation: Optional[pd.DataFrame] = None,
+        external_links: pd.DataFrame | None = None,
+        motif_annotation: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """
         Step 1: Build candidate regulatory events.
@@ -158,7 +157,7 @@ class MoDES:
             )
         return self.events
 
-    def estimate_effects(self) -> Tuple[Dict, Dict]:
+    def estimate_effects(self) -> tuple[dict, dict]:
         """
         Step 2: Estimate ATAC and RNA condition effects.
 
@@ -256,7 +255,7 @@ class MoDES:
         self.states = classifier.classify(self.evidence)
         return self.states
 
-    def _assemble_results(self) -> "MoDESResult":
+    def _assemble_results(self) -> MoDESResult:
         """Combine all pipeline outputs into MoDESResult."""
         if self.events is None or len(self.events) == 0:
             params = {
@@ -395,9 +394,11 @@ class MoDES:
             )
 
         import sys
+
         import numpy as _np
         import pandas as _pd
         import statsmodels as _sm
+
         from modes import __version__ as _modes_ver
 
         params = {
@@ -511,11 +512,11 @@ class MoDESResult:
     def __init__(
         self,
         event_table: pd.DataFrame,
-        state_probabilities: Optional[pd.DataFrame] = None,
-        layer_effects: Optional[pd.DataFrame] = None,
-        evidence_vectors: Optional[pd.DataFrame] = None,
-        model_diagnostics: Optional[pd.DataFrame] = None,
-        params: Optional[dict] = None,
+        state_probabilities: pd.DataFrame | None = None,
+        layer_effects: pd.DataFrame | None = None,
+        evidence_vectors: pd.DataFrame | None = None,
+        model_diagnostics: pd.DataFrame | None = None,
+        params: dict | None = None,
     ):
         self.event_table = event_table
         self.state_probabilities = state_probabilities
@@ -550,19 +551,19 @@ class MoDESResult:
 
     def filter(
         self,
-        state: Optional[str] = None,
-        states: Optional[List[str]] = None,
+        state: str | None = None,
+        states: list[str] | None = None,
         min_confidence: float = 0.0,
-        fdr_threshold: Optional[float] = None,
-        min_atac_fdr: Optional[float] = None,
-        min_rna_fdr: Optional[float] = None,
+        fdr_threshold: float | None = None,
+        min_atac_fdr: float | None = None,
+        min_rna_fdr: float | None = None,
         exclude_high_artifact: bool = False,
-        max_artifact_risk: Optional[str] = None,
-        max_event_fdr: Optional[float] = None,
-        min_quality_score: Optional[float] = None,
-        genes: Optional[List[str]] = None,
-        peaks: Optional[List[str]] = None,
-        context: Optional[str] = None,
+        max_artifact_risk: str | None = None,
+        max_event_fdr: float | None = None,
+        min_quality_score: float | None = None,
+        genes: list[str] | None = None,
+        peaks: list[str] | None = None,
+        context: str | None = None,
     ) -> pd.DataFrame:
         """
         Filter the event table.
@@ -652,7 +653,7 @@ class MoDESResult:
             json.dump(self.params, f, indent=2, default=str)
 
     @classmethod
-    def load(cls, output_dir: str) -> "MoDESResult":
+    def load(cls, output_dir: str) -> MoDESResult:
         """Load results from a directory previously written by save()/to_tsv()."""
         et = pd.read_csv(os.path.join(output_dir, "event_table.tsv"), sep="\t")
         # Restore string columns that pandas may have read as float64 (e.g., "null" → NaN)
@@ -770,7 +771,7 @@ class MoDESResult:
 
 
 def run_by_context(
-    modes: "MoDES",
+    modes: MoDES,
     context_col: str = "context",
     min_samples_per_context: int = 4,
 ) -> pd.DataFrame:

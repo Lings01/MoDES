@@ -1,12 +1,14 @@
 """Visualization functions for MoDES results."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
 
-import io
 import base64
+import io
 
 import numpy as np
 import pandas as pd
@@ -28,7 +30,7 @@ def _fig_to_base64(fig) -> str:
     return base64.b64encode(buf.read()).decode("utf-8")
 
 
-def plot_state_distribution(results) -> "plt.Figure":  # noqa: F821
+def plot_state_distribution(results) -> plt.Figure:  # noqa: F821
     """Bar chart of event counts per state."""
     import matplotlib.pyplot as plt
 
@@ -53,7 +55,7 @@ def plot_state_distribution(results) -> "plt.Figure":  # noqa: F821
     return fig
 
 
-def plot_volcano_atac(results, fdr_threshold: float = 0.1) -> "plt.Figure":  # noqa: F821
+def plot_volcano_atac(results, fdr_threshold: float = 0.1) -> plt.Figure:  # noqa: F821
     """Volcano plot of ATAC effects."""
     import matplotlib.pyplot as plt
 
@@ -89,7 +91,7 @@ def plot_volcano_atac(results, fdr_threshold: float = 0.1) -> "plt.Figure":  # n
     return fig
 
 
-def plot_volcano_rna(results, fdr_threshold: float = 0.1) -> "plt.Figure":  # noqa: F821
+def plot_volcano_rna(results, fdr_threshold: float = 0.1) -> plt.Figure:  # noqa: F821
     """Volcano plot of RNA effects."""
     import matplotlib.pyplot as plt
 
@@ -125,7 +127,7 @@ def plot_volcano_rna(results, fdr_threshold: float = 0.1) -> "plt.Figure":  # no
     return fig
 
 
-def plot_atac_vs_rna(results, color_by: str = "state") -> "plt.Figure":  # noqa: F821
+def plot_atac_vs_rna(results, color_by: str = "state") -> plt.Figure:  # noqa: F821
     """Scatter plot: ATAC effect vs RNA effect colored by state."""
     import matplotlib.pyplot as plt
 
@@ -160,7 +162,7 @@ def plot_atac_vs_rna(results, color_by: str = "state") -> "plt.Figure":  # noqa:
     return fig
 
 
-def plot_evidence_heatmap(results, n_top: int = 50, figsize=(8, 10)) -> "plt.Figure":  # noqa: F821
+def plot_evidence_heatmap(results, n_top: int = 50, figsize=(8, 10)) -> plt.Figure:  # noqa: F821
     """Heatmap of evidence vectors for top events."""
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -190,7 +192,7 @@ def plot_evidence_heatmap(results, n_top: int = 50, figsize=(8, 10)) -> "plt.Fig
     return fig
 
 
-def plot_quality_distribution(results) -> "plt.Figure":  # noqa: F821
+def plot_quality_distribution(results) -> plt.Figure:  # noqa: F821
     """Histogram of quality scores faceted by state."""
     import matplotlib.pyplot as plt
 
@@ -217,11 +219,11 @@ def plot_quality_distribution(results) -> "plt.Figure":  # noqa: F821
     return fig
 
 
-def plot_network(results, min_confidence: float = 0.5) -> "plt.Figure":  # noqa: F821
+def plot_network(results, min_confidence: float = 0.5) -> plt.Figure:  # noqa: F821
     """Visualize event network (TF->peak->gene) with state coloring."""
     try:
-        import networkx as nx
         import matplotlib.pyplot as plt
+        import networkx as nx
     except ImportError:
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, "networkx not available", ha="center", va="center")

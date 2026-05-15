@@ -1,7 +1,7 @@
 """Tests for EffectEstimator."""
 
-import pytest
 import numpy as np
+import pytest
 
 from modes.effects import EffectEstimator
 

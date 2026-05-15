@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 import pandas as pd
 
 from modes._types import EventCandidate
@@ -31,16 +29,16 @@ class EventCandidateBuilder:
     ):
         self.promoter_window = promoter_window
         self.distal_window = distal_window
-        self._tss_map: Optional[Dict[str, tuple]] = None
+        self._tss_map: dict[str, tuple] | None = None
 
     def build(
         self,
-        gene_names: List[str],
-        peak_names: List[str],
-        external_links: Optional[pd.DataFrame] = None,
-        motif_annotation: Optional[pd.DataFrame] = None,
-        genome_annotation: Optional[str] = None,
-        tss_map: Optional[Dict[str, tuple]] = None,
+        gene_names: list[str],
+        peak_names: list[str],
+        external_links: pd.DataFrame | None = None,
+        motif_annotation: pd.DataFrame | None = None,
+        genome_annotation: str | None = None,
+        tss_map: dict[str, tuple] | None = None,
     ) -> pd.DataFrame:
         """
         Build candidate events.
@@ -248,7 +246,7 @@ class EventCandidateBuilder:
         return candidates
 
 
-def _candidate_columns() -> List[str]:
+def _candidate_columns() -> list[str]:
     return [
         "event_id", "gene", "peak_id", "peak_chr", "peak_start",
         "peak_end", "tf_name", "context", "link_source", "distance_to_tss",
@@ -267,7 +265,7 @@ def _parse_peak_name(name: str) -> tuple:
     return (str(name), "unknown", 0, 0)
 
 
-def _parse_gene_tss_from_names(gene_names: List[str]) -> Dict[str, tuple]:
+def _parse_gene_tss_from_names(gene_names: list[str]) -> dict[str, tuple]:
     """
     Try to parse gene names that include coordinate info.
     Falls back to a dummy map if names don't contain coordinates.
@@ -285,7 +283,7 @@ def _parse_gene_tss_from_names(gene_names: List[str]) -> Dict[str, tuple]:
     return tss_map
 
 
-def _parse_gtf_tss(gtf_path: str, gene_names: List[str]) -> Dict[str, tuple]:
+def _parse_gtf_tss(gtf_path: str, gene_names: list[str]) -> dict[str, tuple]:
     """Parse TSS positions from a GTF file for requested genes."""
     tss_map = {}
     gene_set = set(gene_names)
@@ -331,7 +329,7 @@ def _peak_tss_distance(peak_start: int, peak_end: int, tss_pos: int) -> int:
     return peak_center - tss_pos
 
 
-def validate_external_links(links: pd.DataFrame, peak_names: set, gene_names: set) -> List[str]:
+def validate_external_links(links: pd.DataFrame, peak_names: set, gene_names: set) -> list[str]:
     """
     Validate an external_links DataFrame.
 

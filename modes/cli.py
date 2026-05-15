@@ -54,7 +54,8 @@ def main():
 
 def _cmd_run(args):
     import pandas as pd
-    from modes import MoDES, MoDEData
+
+    from modes import MoDEData, MoDES
 
     covariates = args.covariates.split(",") if args.covariates else None
 
@@ -97,6 +98,7 @@ def _cmd_run(args):
 
 def _cmd_validate(args):
     import pandas as pd
+
     from modes.data import MoDEData
 
     issues = []

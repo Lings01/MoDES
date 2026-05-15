@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict
-
 import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
@@ -22,8 +20,8 @@ class EvidenceBuilder:
     def build(
         self,
         events: pd.DataFrame,
-        atac_effects: Dict[str, ModalityEffect],
-        rna_effects: Dict[str, ModalityEffect],
+        atac_effects: dict[str, ModalityEffect],
+        rna_effects: dict[str, ModalityEffect],
         conditional_effects: pd.DataFrame,
         data,
     ) -> pd.DataFrame:

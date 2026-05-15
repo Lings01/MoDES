@@ -1,11 +1,11 @@
 """Tests for ConditionalDecomposition."""
 
-import pytest
 import numpy as np
 import pandas as pd
+import pytest
 
-from modes.effects import EffectEstimator
 from modes.decompose import ConditionalDecomposition
+from modes.effects import EffectEstimator
 
 
 class TestConditionalDecomposition:

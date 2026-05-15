@@ -8,8 +8,8 @@ Usage:
     python benchmarks/simulated_event_states/run_benchmark.py
 """
 
-import sys
 import os
+import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 import numpy as np
 import pandas as pd
 
-from modes import MoDES, MoDEData
+from modes import MoDEData, MoDES
 
 
 def generate_benchmark_data(

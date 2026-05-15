@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import io
 import base64
 import html
+import io
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -98,7 +98,7 @@ TEMPLATE = """<!DOCTYPE html>
 </html>"""
 
 
-def generate_report(results: "MoDESResult", output_path: str) -> None:
+def generate_report(results: MoDESResult, output_path: str) -> None:
     """
     Generate a self-contained HTML report.
 
@@ -109,10 +109,10 @@ def generate_report(results: "MoDESResult", output_path: str) -> None:
         Path to write report.html.
     """
     from modes.plotting import (
+        plot_atac_vs_rna,
         plot_state_distribution,
         plot_volcano_atac,
         plot_volcano_rna,
-        plot_atac_vs_rna,
     )
 
     # Generate plots

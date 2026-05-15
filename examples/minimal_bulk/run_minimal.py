@@ -7,12 +7,14 @@ This demonstrates loading bulk RNA+ATAC data with plain gene symbols
 (STAT1, GZMB, IL7R) and using external peak-gene links to build events.
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import pandas as pd
-from modes import MoDES, MoDEData
+
+from modes import MoDEData, MoDES
 
 # Load data
 base = os.path.dirname(__file__)

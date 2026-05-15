@@ -181,8 +181,8 @@ class TestIntegration:
 
     def test_full_pipeline_outputs(self, synthetic_bulk_data_small):
         """All output files are generated correctly."""
-        import tempfile
         import os
+        import tempfile
 
         data, gt, tss_map = synthetic_bulk_data_small
         modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")

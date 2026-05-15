@@ -1,16 +1,16 @@
 """Tests for EvidenceBuilder and StateClassifier."""
 
-import pytest
 import pandas as pd
+import pytest
 
 from modes.states import EvidenceBuilder, StateClassifier, summarize_states
 
 
 class TestEvidenceBuilder:
     def test_build(self, synthetic_bulk_data_small):
-        from modes.events import EventCandidateBuilder
-        from modes.effects import EffectEstimator
         from modes.decompose import ConditionalDecomposition
+        from modes.effects import EffectEstimator
+        from modes.events import EventCandidateBuilder
 
         data, gt, tss_map = synthetic_bulk_data_small
 
@@ -44,9 +44,9 @@ class TestEvidenceBuilder:
 class TestStateClassifier:
     @pytest.fixture
     def evidence_df(self, synthetic_bulk_data_small):
-        from modes.events import EventCandidateBuilder
-        from modes.effects import EffectEstimator
         from modes.decompose import ConditionalDecomposition
+        from modes.effects import EffectEstimator
+        from modes.events import EventCandidateBuilder
 
         data, gt, tss_map = synthetic_bulk_data_small
 

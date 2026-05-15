@@ -1,10 +1,11 @@
 """Tests for statistical utilities."""
 
 import numpy as np
+
 from modes.utils import (
     benjamini_hochberg,
-    empirical_bayes_moderate,
     compute_quality_score,
+    empirical_bayes_moderate,
 )
 
 

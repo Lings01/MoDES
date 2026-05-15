@@ -8,7 +8,7 @@ def test_import_modes():
 
 
 def test_public_api_imports():
-    from modes import MoDES, MoDEData, MoDESResult, EventCandidateBuilder
+    from modes import EventCandidateBuilder, MoDEData, MoDES, MoDESResult
     assert MoDES is not None
     assert MoDEData is not None
     assert MoDESResult is not None

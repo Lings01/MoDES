@@ -5,13 +5,15 @@ Usage:
     python benchmarks/negative_control/run_negative_control.py
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import numpy as np
 import pandas as pd
-from modes import MoDES, MoDEData
+
+from modes import MoDEData, MoDES
 
 
 def main():

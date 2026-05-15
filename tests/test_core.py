@@ -1,9 +1,10 @@
 """Tests for MoDES orchestrator and MoDESResult."""
 
-import pytest
 import os
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from modes import MoDES
 

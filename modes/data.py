@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import warnings
-from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -71,14 +70,14 @@ class MoDEData:
     @classmethod
     def from_matrices(
         cls,
-        rna_counts: Union[str, pd.DataFrame],
-        atac_counts: Union[str, pd.DataFrame],
-        metadata: Union[str, pd.DataFrame],
+        rna_counts: str | pd.DataFrame,
+        atac_counts: str | pd.DataFrame,
+        metadata: str | pd.DataFrame,
         condition_col: str,
-        donor_col: Optional[str] = None,
-        batch_col: Optional[str] = None,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
         **kwargs,
-    ) -> "MoDEData":
+    ) -> MoDEData:
         """
         Build MoDEData from TSV/CSV matrices.
 
@@ -132,10 +131,10 @@ class MoDEData:
         cls,
         adata,
         condition_col: str,
-        donor_col: Optional[str] = None,
-        batch_col: Optional[str] = None,
-        atac_layer: Optional[str] = None,
-    ) -> "MoDEData":
+        donor_col: str | None = None,
+        batch_col: str | None = None,
+        atac_layer: str | None = None,
+    ) -> MoDEData:
         """
         Build MoDEData from a single AnnData with both RNA and ATAC.
 
@@ -206,13 +205,13 @@ class MoDEData:
     def from_pseudobulk(
         cls,
         adata,
-        groupby: List[str],
+        groupby: list[str],
         condition_col: str,
         donor_col: str,
         min_cells_per_group: int = 10,
         aggregation: str = "sum",
-        atac_layer: Optional[str] = None,
-    ) -> "MoDEData":
+        atac_layer: str | None = None,
+    ) -> MoDEData:
         """
         Build MoDEData by aggregating single-cell data to pseudobulk.
 
@@ -350,7 +349,7 @@ class MoDEData:
         region_col: str = "region",
         sample_col: str = "sample",
         condition_col: str = "condition",
-    ) -> "MoDEData":
+    ) -> MoDEData:
         """
         Load spatial data aggregated to region-level pseudobulk.
 
@@ -373,12 +372,12 @@ class MoDEData:
         mdata,
         rna_mod: str = "rna",
         atac_mod: str = "atac",
-        groupby: Optional[List[str]] = None,
+        groupby: list[str] | None = None,
         condition_col: str = "condition",
-        donor_col: Optional[str] = None,
-        batch_col: Optional[str] = None,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
         min_cells_per_group: int = 20,
-    ) -> "MoDEData":
+    ) -> MoDEData:
         """
         Load data from a MuData object with RNA and ATAC modalities.
 
@@ -449,7 +448,7 @@ class MoDEData:
 
     # -- Methods --
 
-    def validate(self, condition_col: str = None) -> List[str]:
+    def validate(self, condition_col: str = None) -> list[str]:
         """Check data integrity. Returns list of issues found."""
         issues = []
         # Sample count
@@ -517,7 +516,7 @@ class MoDEData:
         min_counts: int = 1,
         min_rna_samples: int = 3,
         min_atac_samples: int = 3,
-    ) -> "MoDEData":
+    ) -> MoDEData:
         """Filter low-coverage genes and peaks."""
         rna_mask = (self.rna > 0).sum(axis=0) >= min_rna_samples
         rna_mask &= self.rna.sum(axis=0) >= min_counts
@@ -531,7 +530,7 @@ class MoDEData:
             obs=self.obs.copy(),
         )
 
-    def normalize_library_size(self, method: str = "median_ratio") -> "MoDEData":
+    def normalize_library_size(self, method: str = "median_ratio") -> MoDEData:
         """
         Compute library-size-normalized counts (returned as new matrices).
         Does NOT modify in place.
@@ -568,7 +567,7 @@ class MoDEData:
             obs=self.obs.copy(),
         )
 
-    def get_library_sizes(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_library_sizes(self) -> tuple[np.ndarray, np.ndarray]:
         """Return log library sizes for RNA and ATAC (used as offsets)."""
         rna_sum = self.rna.sum(axis=1).values
         atac_sum = self.atac.sum(axis=1).values
@@ -583,7 +582,7 @@ class MoDEData:
 
 # -- Internal helpers --
 
-def _load_matrix(path_or_df: Union[str, pd.DataFrame], **kwargs) -> pd.DataFrame:
+def _load_matrix(path_or_df: str | pd.DataFrame, **kwargs) -> pd.DataFrame:
     """Load a matrix from file or return DataFrame as-is."""
     if isinstance(path_or_df, pd.DataFrame):
         return path_or_df.copy()

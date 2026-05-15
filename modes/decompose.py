@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -34,10 +33,10 @@ class ConditionalDecomposition:
     def __init__(
         self,
         condition_col: str,
-        covariate_cols: Optional[List[str]] = None,
-        donor_col: Optional[str] = None,
-        batch_col: Optional[str] = None,
-        contrast: Optional[tuple] = None,
+        covariate_cols: list[str] | None = None,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
+        contrast: tuple | None = None,
         conditional_mode: str = "single_peak",
     ):
         self.condition_col = condition_col
@@ -51,8 +50,8 @@ class ConditionalDecomposition:
         self,
         data,
         events: pd.DataFrame,
-        atac_effects: Dict[str, ModalityEffect],
-        rna_effects: Dict[str, ModalityEffect],
+        atac_effects: dict[str, ModalityEffect],
+        rna_effects: dict[str, ModalityEffect],
     ) -> pd.DataFrame:
         """
         Compute conditional RNA effects for each event.
@@ -168,7 +167,7 @@ class ConditionalDecomposition:
         gene: str,
         cis_score: np.ndarray,
         rna_offset: np.ndarray,
-        rna_marginal_effect: Optional[ModalityEffect] = None,
+        rna_marginal_effect: ModalityEffect | None = None,
     ) -> dict:
         """
         Fit RNA_g ~ Condition + cis_ATAC_score + Covariates.
@@ -219,7 +218,7 @@ class ConditionalDecomposition:
         gene: str,
         peak: str,
         rna_offset: np.ndarray,
-        rna_marginal_effect: Optional[ModalityEffect] = None,
+        rna_marginal_effect: ModalityEffect | None = None,
     ) -> dict:
         """
         Fit RNA_g ~ Condition + ATAC_peak + Covariates.

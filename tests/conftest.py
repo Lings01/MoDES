@@ -1,8 +1,8 @@
 """Shared test fixtures with synthetic ground truth data."""
 
-import pytest
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def _generate_counts(means, size=100):

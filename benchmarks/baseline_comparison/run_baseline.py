@@ -13,13 +13,15 @@ Usage:
     python benchmarks/baseline_comparison/run_baseline.py
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import numpy as np
 import pandas as pd
-from modes import MoDES, MoDEData
+
+from modes import MoDEData, MoDES
 
 
 def naive_classify(atac_fdr, rna_fdr, atac_dir, rna_dir, threshold=0.1):

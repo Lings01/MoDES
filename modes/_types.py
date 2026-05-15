@@ -1,7 +1,6 @@
 """Internal type definitions for MoDES."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -14,7 +13,7 @@ class EventCandidate:
     peak_chr: str
     peak_start: int
     peak_end: int
-    tf_name: Optional[str] = None
+    tf_name: str | None = None
     context: str = ""
     link_source: str = ""
     distance_to_tss: int = 0
@@ -42,7 +41,7 @@ class EventEvidence:
     context: str
     effect_atac: ModalityEffect
     effect_rna: ModalityEffect
-    effect_rna_given_atac: Optional[ModalityEffect] = None
+    effect_rna_given_atac: ModalityEffect | None = None
     quality_score: float = 0.5
 
     @property
@@ -60,7 +59,7 @@ class EventEvidence:
         return self.effect_rna_given_atac.z_score
 
     @property
-    def evidence_vector(self) -> List[float]:
+    def evidence_vector(self) -> list[float]:
         return [self.z_atac, self.z_rna, self.z_rna_given_atac, self.quality_score]
 
 
@@ -83,7 +82,7 @@ class EventResult:
     """Combined result for a single event -- the main output row."""
 
     event_id: str
-    tf_name: Optional[str]
+    tf_name: str | None
     peak_id: str
     gene: str
     context: str
