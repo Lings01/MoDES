@@ -29,6 +29,14 @@ def _event_result_columns():
     ]
 
 
+def _read_optional_tsv(output_dir: str, filename: str):
+    """Read a TSV file if it exists, else return None."""
+    path = os.path.join(output_dir, filename)
+    if os.path.exists(path):
+        return pd.read_csv(path, sep="\t")
+    return None
+
+
 class MoDES:
     """
     Multi-Omics Discordance/Event State inference.
@@ -383,16 +391,32 @@ class MoDES:
                 )
             )
 
+        import sys
+        import time as _time
+        import numpy as _np
+        import pandas as _pd
+        import statsmodels as _sm
+        from modes import __version__ as _modes_ver
+
         params = {
+            "modes_version": _modes_ver,
+            "python_version": sys.version.split()[0],
+            "numpy_version": _np.__version__,
+            "pandas_version": _pd.__version__,
+            "statsmodels_version": _sm.__version__,
             "condition_col": self.condition_col,
+            "contrast": str(self.contrast) if self.contrast else "auto",
             "covariate_cols": self.covariate_cols,
             "donor_col": self.donor_col,
             "batch_col": self.batch_col,
             "fdr_threshold": self.fdr_threshold,
+            "allow_poisson_fallback": self.allow_poisson_fallback,
+            "allow_simplified_fallback": self.allow_simplified_fallback,
             "n_events": len(records),
             "n_samples": self.data.n_samples,
             "n_genes": self.data.n_genes,
             "n_peaks": self.data.n_peaks,
+            "n_external_links": len(self.external_links) if self.external_links is not None else 0,
         }
 
         model_diag = self._build_model_diagnostics()
@@ -525,6 +549,7 @@ class MoDESResult:
     def filter(
         self,
         state: Optional[str] = None,
+        states: Optional[List[str]] = None,
         min_confidence: float = 0.0,
         fdr_threshold: Optional[float] = None,
         min_atac_fdr: Optional[float] = None,
@@ -532,6 +557,10 @@ class MoDESResult:
         exclude_high_artifact: bool = False,
         max_artifact_risk: Optional[str] = None,
         max_event_fdr: Optional[float] = None,
+        min_quality_score: Optional[float] = None,
+        genes: Optional[List[str]] = None,
+        peaks: Optional[List[str]] = None,
+        context: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Filter the event table.
@@ -540,18 +569,26 @@ class MoDESResult:
         ----------
         state : str, optional
             Keep only events with this state.
+        states : list of str, optional
+            Keep events with any of these states.
         min_confidence : float
             Minimum state confidence.
         fdr_threshold : float, optional
             Keep events where atac_fdr < threshold OR rna_fdr < threshold.
-        min_atac_fdr, min_rna_fdr : float, optional
-            Per-modality FDR thresholds.
         exclude_high_artifact : bool
             Exclude events with artifact_risk == "high".
         max_artifact_risk : str, optional
-            Maximum allowed artifact risk ("low" < "medium" < "high").
+            Maximum allowed artifact risk.
         max_event_fdr : float, optional
-            Maximum event-level FDR threshold. Events with event_fdr <= this are kept.
+            Maximum event-level FDR threshold.
+        min_quality_score : float, optional
+            Minimum quality score.
+        genes : list of str, optional
+            Keep only events for these genes.
+        peaks : list of str, optional
+            Keep only events for these peaks.
+        context : str, optional
+            Keep only events matching this context.
 
         Returns
         -------
@@ -561,6 +598,9 @@ class MoDESResult:
 
         if state is not None:
             df = df[df["state"] == state]
+
+        if states is not None:
+            df = df[df["state"].isin(states)]
 
         if min_confidence > 0:
             df = df[df["state_confidence"] >= min_confidence]
@@ -585,12 +625,57 @@ class MoDESResult:
 
         if max_artifact_risk is not None and "artifact_risk" in df.columns:
             risk_order = {"low": 0, "medium": 1, "high": 2}
-            max_rank = risk_order.get(max_artifact_risk, 2)
-            df = df[
-                df["artifact_risk"].map(risk_order).fillna(0) <= max_rank
-            ]
+            df = df[df["artifact_risk"].map(risk_order).fillna(0) <= risk_order.get(max_artifact_risk, 2)]
+
+        if min_quality_score is not None and "quality_score" in df.columns:
+            df = df[df["quality_score"] >= min_quality_score]
+
+        if genes is not None:
+            df = df[df["gene"].isin(genes)]
+
+        if peaks is not None:
+            df = df[df["peak_id"].isin(peaks)]
+
+        if context is not None:
+            df = df[df["context"] == context]
 
         return df.reset_index(drop=True)
+
+    def save(self, output_dir: str) -> None:
+        """Save all result tables to a directory. Alias for to_tsv()."""
+        self.to_tsv(output_dir)
+        # Also save params as JSON
+        import json
+        with open(os.path.join(output_dir, "run_params.json"), "w") as f:
+            json.dump(self.params, f, indent=2, default=str)
+
+    @classmethod
+    def load(cls, output_dir: str) -> "MoDESResult":
+        """Load results from a directory previously written by save()/to_tsv()."""
+        et = pd.read_csv(os.path.join(output_dir, "event_table.tsv"), sep="\t")
+        # Restore string columns that pandas may have read as float64 (e.g., "null" → NaN)
+        for col in ["state", "artifact_risk", "artifact_reason", "tf_name", "context"]:
+            if col in et.columns:
+                et[col] = et[col].fillna("").astype(str).replace({"nan": "", "None": ""})
+                if col in ("state", "artifact_risk"):
+                    et[col] = et[col].replace({"": "null", "nan": "null"})
+        sp = _read_optional_tsv(output_dir, "event_state_confidence.tsv")
+        le = _read_optional_tsv(output_dir, "event_layer_effects.tsv")
+        ev = _read_optional_tsv(output_dir, "event_evidence_vectors.tsv")
+        md = _read_optional_tsv(output_dir, "model_diagnostics.tsv")
+        import json
+        params = {}
+        rp_json = os.path.join(output_dir, "run_params.json")
+        if os.path.exists(rp_json):
+            with open(rp_json) as f:
+                params = json.load(f)
+        elif os.path.exists(os.path.join(output_dir, "run_params.tsv")):
+            rp = pd.read_csv(os.path.join(output_dir, "run_params.tsv"), sep="\t")
+            params = dict(zip(rp["parameter"], rp["value"]))
+        return cls(
+            event_table=et, state_probabilities=sp, layer_effects=le,
+            evidence_vectors=ev, model_diagnostics=md, params=params,
+        )
 
     def to_tsv(self, output_dir: str) -> None:
         """Write TSV output files to output_dir."""

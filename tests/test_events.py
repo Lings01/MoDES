@@ -24,9 +24,9 @@ class TestEventCandidateBuilder:
         events = builder.build(gene_names=gene_names, peak_names=peak_names)
 
         assert len(events) > 0
-        # Should have events for both genes
-        assert any("geneA" in eid for eid in events["event_id"])
-        assert any("geneB" in eid for eid in events["event_id"])
+        # Should have events for both genes (check via gene column, not hash event_id)
+        assert "geneA:chr1:10000" in set(events["gene"])
+        assert "geneB:chr1:50000" in set(events["gene"])
 
     def test_build_creates_unique_event_ids(self):
         builder = EventCandidateBuilder()
@@ -36,8 +36,10 @@ class TestEventCandidateBuilder:
         events = builder.build(gene_names=gene_names, peak_names=peak_names)
 
         assert len(events) == 1
-        assert "geneX" in events.iloc[0]["event_id"]
-        assert "chr1:800-1200" in events.iloc[0]["event_id"]
+        # event_id is now a deterministic 12-char hex hash
+        eid = events.iloc[0]["event_id"]
+        assert len(eid) == 12
+        assert all(c in "0123456789abcdef" for c in eid)
 
     def test_build_with_external_links(self):
         """Test merging external pre-computed links."""

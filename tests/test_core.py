@@ -249,3 +249,82 @@ def test_report_escapes_html(synthetic_bulk_data_small, tmp_path):
         html_text = f.read()
     assert "<script>" not in html_text
     assert "&lt;script&gt;" in html_text
+
+
+def test_event_table_schema_exact(synthetic_bulk_data_small):
+    """Output schema must match the frozen v1.1 column order."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    expected = [
+        "event_id", "tf_name", "peak_id", "gene", "context",
+        "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
+        "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
+        "rna_after_atac_coef", "rna_after_atac_se",
+        "rna_after_atac_pval", "rna_after_atac_fdr",
+        "state", "state_confidence", "quality_score",
+        "artifact_risk", "artifact_reason",
+        "event_pval", "event_fdr",
+    ]
+    assert list(result.event_table.columns) == expected
+
+
+def test_save_load_roundtrip(synthetic_bulk_data_small, tmp_path):
+    """save() + load() should produce identical event_tables."""
+    from modes import MoDESResult
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    out = str(tmp_path / "results")
+    result.save(out)
+    loaded = MoDESResult.load(out)
+
+    assert list(result.event_table.columns) == list(loaded.event_table.columns)
+    assert len(result.event_table) == len(loaded.event_table)
+    assert result.params == loaded.params
+
+
+def test_filter_states(synthetic_bulk_data_small):
+    """Filter by states list should work."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    filtered = result.filter(states=["concordant", "chromatin_primed"])
+    assert set(filtered["state"].unique()).issubset({"concordant", "chromatin_primed"})
+
+
+def test_filter_genes(synthetic_bulk_data_small):
+    """Filter by gene list should work."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    genes = result.event_table["gene"].iloc[:2].tolist()
+    filtered = result.filter(genes=genes)
+    assert set(filtered["gene"].unique()).issubset(set(genes))
+
+
+def test_filter_peaks(synthetic_bulk_data_small):
+    """Filter by peak list should work."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    peaks = result.event_table["peak_id"].iloc[:2].tolist()
+    filtered = result.filter(peaks=peaks)
+    assert set(filtered["peak_id"].unique()).issubset(set(peaks))
+
+
+def test_run_params_has_versions(synthetic_bulk_data_small):
+    """run_params should include version info."""
+    data, _, tss_map = synthetic_bulk_data_small
+    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    result = modes.run()
+
+    assert "modes_version" in result.params
+    assert "python_version" in result.params
+    assert "numpy_version" in result.params
+    assert "n_external_links" in result.params

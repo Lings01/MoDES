@@ -98,6 +98,12 @@ class EventCandidateBuilder:
         for g in gene_names:
             tss_info = self._tss_map.get(g)
             if tss_info is None:
+                # Try lookup by parsed short name (e.g., "geneX" from "geneX:chr1:1000")
+                for key, val in self._tss_map.items():
+                    if val[0] == g or key == g.split(":")[0].split("_")[0]:
+                        tss_info = val
+                        break
+            if tss_info is None:
                 n_missing_genes += 1
                 continue
             chrom = tss_info[1] if len(tss_info) > 1 else ""
@@ -142,7 +148,9 @@ class EventCandidateBuilder:
                 else:
                     continue
 
-                event_id = f"{gene}_{peak['peak_id']}_{source}"
+                from hashlib import sha1
+                event_key = f"{peak['peak_id']}|{gene}|{source}"
+                event_id = sha1(event_key.encode()).hexdigest()[:12]
                 rows.append(
                     EventCandidate(
                         event_id=event_id,
