@@ -1,0 +1,10 @@
+parameter	value
+condition_col	condition
+covariate_cols	[]
+donor_col	
+batch_col	
+fdr_threshold	0.2
+n_events	310
+n_samples	16
+n_genes	500
+n_peaks	500

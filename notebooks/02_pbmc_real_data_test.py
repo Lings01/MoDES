@@ -53,25 +53,36 @@ def load_pbmc_10k(h5_path):
     rna_mat = matrix[rna_idx, :].tocsc()
     atac_mat = matrix[atac_idx, :].tocsc()
 
-    # Filter low-coverage genes and peaks
+    # Take top variable genes and peaks for a practical subset
+    rng = np.random.default_rng(42)
+    n_genes = 500
+    n_peaks = 500
+    n_cells = 1000
+
     rna_nnz = np.array((rna_mat > 0).sum(axis=1)).flatten()
     atac_nnz = np.array((atac_mat > 0).sum(axis=1)).flatten()
-    rna_keep = rna_nnz >= 50
-    atac_keep = atac_nnz >= 20
 
-    rna_mat = rna_mat[rna_keep, :].toarray().T
-    atac_mat = atac_mat[atac_keep, :].toarray().T
-    rna_names = [rna_names[i] for i in range(len(rna_names)) if rna_keep[i]]
-    atac_names = [atac_names[i] for i in range(len(atac_names)) if atac_keep[i]]
+    # Select top genes by coverage and top peaks by coverage
+    rna_top = np.argsort(rna_nnz)[-n_genes:]
+    atac_top = np.argsort(atac_nnz)[-n_peaks:]
 
-    print(f"  Cells: {len(barcodes)}")
-    print(f"  RNA genes (filtered): {len(rna_names)}")
-    print(f"  ATAC peaks (filtered): {len(atac_names)}")
+    # Sample cells
+    cell_idx = rng.choice(rna_mat.shape[1], n_cells, replace=False)
+
+    rna_mat = rna_mat[rna_top, :][:, cell_idx].toarray().T
+    atac_mat = atac_mat[atac_top, :][:, cell_idx].toarray().T
+    rna_names = [rna_names[i] for i in rna_top]
+    atac_names = [atac_names[i] for i in atac_top]
+    barcodes = [barcodes[i] for i in cell_idx]
+
+    print(f"  Cells (subset): {len(barcodes)}")
+    print(f"  RNA genes (top expressed): {len(rna_names)}")
+    print(f"  ATAC peaks (top accessible): {len(atac_names)}")
 
     return rna_mat, atac_mat, rna_names, atac_names, barcodes
 
 
-def create_pseudobulk_test(rna, atac, rna_names, atac_names, n_cells_per_group=500):
+def create_pseudobulk_test(rna, atac, rna_names, atac_names, n_cells_per_group=400):
     """Create pseudobulk with known spike-in effects."""
     rng = np.random.default_rng(42)
     n_total = n_cells_per_group * 2
