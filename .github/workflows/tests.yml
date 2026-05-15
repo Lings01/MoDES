@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip build twine
-      - run: python -m build
+      - run: python -m build --wheel
       - run: twine check dist/*
       - run: pip install dist/*.whl
       - run: python -c "from modes import MoDES, MoDEData; print('ok')"
