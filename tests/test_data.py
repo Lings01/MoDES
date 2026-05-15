@@ -184,3 +184,47 @@ def test_validate_finds_condition_binary(synthetic_bulk_data_small):
     data.obs["condition"] = ["A", "B", "C"] * (n // 3) + ["A"] * (n % 3)
     issues = data.validate(condition_col="condition")
     assert any("binary" in i.lower() for i in issues)
+
+
+def test_from_mudata_toy():
+    """Test from_mudata with a toy MuData-like double AnnData setup."""
+    import anndata
+    import numpy as np
+    import pandas as pd
+
+    class ToyMuData:
+        def __init__(self, adata_rna, adata_atac):
+            self.mod = {"rna": adata_rna, "atac": adata_atac}
+
+    rng = np.random.default_rng(42)
+    n_cells = 60
+
+    adata_rna = anndata.AnnData(
+        X=rng.poisson(10, (n_cells, 5)).astype(float),
+        obs=pd.DataFrame({
+            "donor": [f"d{i % 3}" for i in range(n_cells)],
+            "condition": ["ctrl"] * 30 + ["trt"] * 30,
+            "cell_type": ["T"] * 20 + ["B"] * 20 + ["NK"] * 20,
+        }),
+        var=pd.DataFrame(index=["G1", "G2", "G3", "G4", "G5"]),
+    )
+    adata_atac = anndata.AnnData(
+        X=rng.poisson(5, (n_cells, 4)).astype(float),
+        obs=adata_rna.obs,
+        var=pd.DataFrame(index=["p1", "p2", "p3", "p4"]),
+    )
+
+    mdata = ToyMuData(adata_rna, adata_atac)
+
+    from modes.data import MoDEData
+    data = MoDEData.from_mudata(
+        mdata,
+        rna_mod="rna", atac_mod="atac",
+        groupby=["donor", "condition", "cell_type"],
+        condition_col="condition", donor_col="donor",
+        min_cells_per_group=2,
+    )
+    assert data.n_samples > 0
+    assert data.n_genes == 5
+    assert data.n_peaks == 4
+    assert "context" in data.obs.columns

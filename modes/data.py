@@ -264,24 +264,40 @@ class MoDEData:
         adata_sub = adata[valid_mask.values].copy()
         adata_sub.obs["_group"] = obs.loc[adata_sub.obs_names, "_group"].astype(str).values
 
-        # RNA matrix
-        if hasattr(adata_sub.X, "toarray"):
-            rna_cell = pd.DataFrame(
-                adata_sub.X.toarray(),
-                index=adata_sub.obs_names,
-                columns=adata_sub.var_names,
-            )
-        else:
-            rna_cell = pd.DataFrame(
-                adata_sub.X,
-                index=adata_sub.obs_names,
-                columns=adata_sub.var_names,
-            )
+        groups = adata_sub.obs["_group"].values
+        unique_groups = np.unique(groups)
+        group_to_idx = {g: i for i, g in enumerate(unique_groups)}
 
-        rna_cell["_group"] = adata_sub.obs["_group"].values
-        agg_func = rna_cell.groupby("_group")
-        rna_pb = agg_func.sum() if aggregation == "sum" else agg_func.mean()
-        rna_pb.drop(columns=["_group"], inplace=True, errors="ignore")
+        def _sparse_groupby_sum(mat, groups, unique_groups, group_to_idx, var_names):
+            """Aggregate sparse matrix by group, avoiding dense conversion."""
+            try:
+                from scipy.sparse import issparse, csr_matrix, csc_matrix
+            except ImportError:
+                issparse = lambda x: False
+            if issparse(mat):
+                mat = mat.tocsc()
+                n_groups = len(unique_groups)
+                n_features = mat.shape[1]
+                result = np.zeros((n_groups, n_features))
+                group_indices = np.array([group_to_idx[g] for g in groups])
+                for gi in range(n_groups):
+                    mask = group_indices == gi
+                    result[gi, :] = mat[mask, :].sum(axis=0).A1 if hasattr(mat[mask, :].sum(axis=0), 'A1') else mat[mask, :].sum(axis=0).flatten()
+                return pd.DataFrame(result, index=list(unique_groups), columns=var_names)
+            elif hasattr(mat, "toarray"):
+                df = pd.DataFrame(mat.toarray(), columns=var_names)
+            else:
+                df = pd.DataFrame(mat, columns=var_names)
+            df["_group"] = groups
+            pb = df.groupby("_group").sum()
+            pb.drop(columns=["_group"], inplace=True, errors="ignore")
+            return pb
+
+        # RNA matrix
+        rna_var_names = list(adata_sub.var_names) if hasattr(adata_sub, 'var_names') else [f"g_{i}" for i in range(adata_sub.X.shape[1])]
+        rna_pb = _sparse_groupby_sum(
+            adata_sub.X, groups, unique_groups, group_to_idx, rna_var_names
+        )
 
         # ATAC matrix
         if atac_layer is not None:
@@ -291,24 +307,15 @@ class MoDEData:
         else:
             raise ValueError("ATAC matrix not found")
 
-        if hasattr(atac_arr, "toarray"):
-            atac_arr = atac_arr.toarray()
-
         atac_var_names = None
         if hasattr(adata, "uns") and "atac_var_names" in adata.uns:
             atac_var_names = adata.uns["atac_var_names"]
         else:
             atac_var_names = [f"peak_{i}" for i in range(atac_arr.shape[1])]
 
-        atac_cell = pd.DataFrame(
-            atac_arr,
-            index=adata_sub.obs_names,
-            columns=atac_var_names,
+        atac_pb = _sparse_groupby_sum(
+            atac_arr, groups, unique_groups, group_to_idx, atac_var_names
         )
-        atac_cell["_group"] = adata_sub.obs["_group"].values
-        agg_func_atac = atac_cell.groupby("_group")
-        atac_pb = agg_func_atac.sum() if aggregation == "sum" else agg_func_atac.mean()
-        atac_pb.drop(columns=["_group"], inplace=True, errors="ignore")
 
         # Metadata: aggregate mode / first for categorical, mean for numeric
         obs_sub = adata_sub.obs.copy()
@@ -358,6 +365,86 @@ class MoDEData:
         if len(common) == 0:
             raise ValueError("No common samples across RNA, ATAC, and metadata")
         return cls(rna=rna.loc[common], atac=atac.loc[common], obs=obs.loc[common])
+
+    @classmethod
+    def from_mudata(
+        cls,
+        mdata,
+        rna_mod: str = "rna",
+        atac_mod: str = "atac",
+        groupby: Optional[List[str]] = None,
+        condition_col: str = "condition",
+        donor_col: Optional[str] = None,
+        batch_col: Optional[str] = None,
+        min_cells_per_group: int = 20,
+    ) -> "MoDEData":
+        """
+        Load data from a MuData object with RNA and ATAC modalities.
+
+        Two modes:
+        - groupby=None: direct cell-level data (paired cells, not recommended for DE)
+        - groupby=[...]: pseudobulk aggregation (recommended)
+
+        Parameters
+        ----------
+        mdata : MuData
+            MuData object with rna_mod and atac_mod modalities.
+        rna_mod : str
+            Name of the RNA modality in mdata.mod.
+        atac_mod : str
+            Name of the ATAC modality in mdata.mod.
+        groupby : list of str, optional
+            Columns to group by for pseudobulk aggregation. If None, returns
+            cell-level data (not recommended for differential analysis).
+        condition_col : str
+        donor_col : str, optional
+        batch_col : str, optional
+        min_cells_per_group : int
+            Minimum cells per pseudobulk group.
+        """
+        try:
+            import anndata  # noqa: F401
+        except ImportError:
+            raise ImportError("anndata is required for from_mudata()")
+
+        if rna_mod not in mdata.mod:
+            raise ValueError(f"RNA modality '{rna_mod}' not found in MuData. Available: {list(mdata.mod.keys())}")
+        if atac_mod not in mdata.mod:
+            raise ValueError(f"ATAC modality '{atac_mod}' not found in MuData. Available: {list(mdata.mod.keys())}")
+
+        adata_rna = mdata.mod[rna_mod]
+        adata_atac = mdata.mod[atac_mod]
+
+        # Build a combined AnnData with ATAC in obsm
+        if groupby is not None:
+            obs_combined = adata_rna.obs.copy()
+            for col in groupby:
+                if col not in obs_combined.columns:
+                    raise ValueError(f"Groupby column '{col}' not found")
+            if hasattr(adata_atac.X, "toarray"):
+                atac_mat = adata_atac.X.toarray()
+            else:
+                atac_mat = adata_atac.X
+            adata_rna.obsm["atac"] = atac_mat
+            if hasattr(adata_atac, "var_names"):
+                adata_rna.uns["atac_var_names"] = list(adata_atac.var_names)
+            return cls.from_pseudobulk(
+                adata_rna,
+                groupby=groupby,
+                condition_col=condition_col,
+                donor_col=donor_col,
+                min_cells_per_group=min_cells_per_group,
+            )
+        else:
+            # Direct cell-level: not recommended for DE
+            rna_mat = adata_rna.X.toarray() if hasattr(adata_rna.X, "toarray") else adata_rna.X
+            atac_mat = adata_atac.X.toarray() if hasattr(adata_atac.X, "toarray") else adata_atac.X
+            rna_names = list(adata_rna.var_names) if hasattr(adata_rna, "var_names") else [f"g_{i}" for i in range(rna_mat.shape[1])]
+            atac_names = list(adata_atac.var_names) if hasattr(adata_atac, "var_names") else [f"peak_{i}" for i in range(atac_mat.shape[1])]
+            obs = adata_rna.obs.copy()
+            rna_df = pd.DataFrame(rna_mat, index=obs.index, columns=rna_names)
+            atac_df = pd.DataFrame(atac_mat, index=obs.index, columns=atac_names)
+            return cls(rna=rna_df, atac=atac_df, obs=obs)
 
     # -- Methods --
 
