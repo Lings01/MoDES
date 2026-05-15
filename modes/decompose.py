@@ -194,7 +194,8 @@ class ConditionalDecomposition:
                     result = model2.fit(maxiter=200, disp=0)
             converged = getattr(result, "converged", False)
             if converged and len(result.params) > 1:
-                coef = result.params[1]; se = result.bse[1]
+                coef = result.params[1]
+                se = result.bse[1]
                 z = coef / se if se > 0 else 0.0
                 pval = 2 * scipy_stats.norm.sf(abs(z))
                 return {

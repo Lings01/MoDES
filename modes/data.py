@@ -271,9 +271,10 @@ class MoDEData:
         def _sparse_groupby_sum(mat, groups, unique_groups, group_to_idx, var_names):
             """Aggregate sparse matrix by group, avoiding dense conversion."""
             try:
-                from scipy.sparse import issparse, csr_matrix, csc_matrix
+                from scipy.sparse import issparse
             except ImportError:
-                issparse = lambda x: False
+                def issparse(x):
+                    return False
             if issparse(mat):
                 mat = mat.tocsc()
                 n_groups = len(unique_groups)
