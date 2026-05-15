@@ -189,8 +189,8 @@ def main():
     result = modes.run()
 
     print("\n[3/4] Evaluating...")
-    pred_map = dict(zip(result.event_table["gene"], result.event_table["state"]))
-    predicted = np.array([pred_map.get(g, "null") for g in gt["gene"]])
+    pred_map = dict(zip(result.event_table["event_id"], result.event_table["state"]))
+    predicted = np.array([pred_map.get(eid, "null") for eid in gt["event_id"]])
     truth = gt["true_state"].values
 
     metrics_df, accuracy = evaluate(truth, predicted)

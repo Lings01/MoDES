@@ -101,7 +101,6 @@ def _trigamma_inverse(x: float) -> float:
 
 def compute_quality_score(
     counts: np.ndarray,
-    metadata: np.ndarray,
     batch_labels: np.ndarray = None,
 ) -> float:
     """

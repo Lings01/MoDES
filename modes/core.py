@@ -80,6 +80,7 @@ class MoDES:
         contrast: Optional[tuple] = None,
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
+        conditional_mode: str = "single_peak",
     ):
         self.data = data
         self.condition_col = condition_col
@@ -94,6 +95,7 @@ class MoDES:
         self.contrast = contrast
         self.allow_poisson_fallback = allow_poisson_fallback
         self.allow_simplified_fallback = allow_simplified_fallback
+        self.conditional_mode = conditional_mode
 
         # Pipeline state
         self.events: Optional[pd.DataFrame] = None
@@ -203,6 +205,7 @@ class MoDES:
             donor_col=self.donor_col,
             batch_col=self.batch_col,
             contrast=self.contrast,
+            conditional_mode=self.conditional_mode,
         )
 
         self.conditional_effects = decomposer.decompose(
@@ -392,7 +395,6 @@ class MoDES:
             )
 
         import sys
-        import time as _time
         import numpy as _np
         import pandas as _pd
         import statsmodels as _sm

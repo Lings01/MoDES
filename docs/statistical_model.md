@@ -135,7 +135,6 @@ confounded with batch raises a `ValueError`).
 
 - Binary condition only (two-group comparison)
 - Fixed-effect donor/batch (no random effects)
-- Single linked-peak conditional model (not cis-ATAC score aggregation)
 - `state_confidence` is not a calibrated posterior
 - No multi-condition contrast matrix
 - No continuous pseudotime / time-lag modeling

@@ -29,9 +29,9 @@ runs MoDES, and computes per-state metrics.
 | Recall | TP / (TP + FN) | [0, 1] |
 | F1 | 2 × P × R / (P + R) | [0, 1] |
 
-## Planned Benchmarks
+## Existing Benchmarks
 
-- **Semi-real spike-in**: Real count matrices with controlled effect injection
-- **Negative control**: Shuffled condition labels (expect all null)
-- **Baseline comparison**: Naive overlap vs MoDES state classification
+- **Semi-real spike-in**: Realistic library sizes with controlled effect injection (benchmarks/semi_real_spikein/)
+- **Negative control**: Shuffled labels, 100% null rate (benchmarks/negative_control/)
+- **Baseline comparison**: MoDES vs naive overlap (benchmarks/baseline_comparison/)
 - **Runtime profiling**: By data scale (samples × events)

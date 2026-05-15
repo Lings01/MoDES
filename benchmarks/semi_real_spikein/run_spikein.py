@@ -72,8 +72,13 @@ def main():
     modes = MoDES(data=data, condition_col="condition", tss_map=tss_map)
     result = modes.run()
 
-    pred_map = dict(zip(result.event_table["gene"], result.event_table["state"]))
-    predicted = [pred_map.get(g, "null") for g in gene_names]
+    et = result.event_table
+    # Map gene names to event_ids via the event table
+    gene_to_state = {}
+    for _, row in et.iterrows():
+        if row["gene"] not in gene_to_state:
+            gene_to_state[row["gene"]] = row["state"]
+    predicted = [gene_to_state.get(g, "null") for g in gene_names]
     truth = true_states
 
     correct = sum(p == t for p, t in zip(predicted, truth))

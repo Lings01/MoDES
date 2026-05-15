@@ -18,7 +18,7 @@ setup(
         "seaborn>=0.11",
         "networkx>=2.6",
     ],
-    python_requires=">=3.7",
+    python_requires=">=3.10",
     classifiers=[
         "Programming Language :: Python :: 3",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
