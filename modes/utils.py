@@ -1,7 +1,6 @@
 """Statistical utilities for MoDES."""
 
 import numpy as np
-from scipy import stats
 
 
 def benjamini_hochberg(pvalues: np.ndarray) -> np.ndarray:

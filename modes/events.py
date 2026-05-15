@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
 from modes._types import EventCandidate
@@ -360,4 +359,3 @@ def validate_external_links(links: pd.DataFrame, peak_names: set, gene_names: se
             issues.append(f"{bad_scores} scores outside [0, 1] range")
 
     return issues
-    return peak_center - tss_pos

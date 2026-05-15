@@ -6,7 +6,6 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
 from scipy import stats as scipy_stats
 
 from modes._types import ModalityEffect
@@ -442,7 +441,7 @@ def _safe_fit_nb_glm(
             return result3
         return None
 
-    except Exception as e:
+    except Exception:
         # Final fallback: simplified model (if allowed)
         if not allow_simplified:
             return None

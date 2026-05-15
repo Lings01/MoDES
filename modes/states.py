@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 
 import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
-from modes._types import EventEvidence, EventState, ModalityEffect
+from modes._types import EventEvidence, ModalityEffect
 from modes.utils import compute_quality_score
 
 

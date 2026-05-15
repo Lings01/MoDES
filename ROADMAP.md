@@ -21,7 +21,7 @@ artifact risk, and full output schema.
 - Spatial documentation and example
 
 ## v0.5.0-beta
-- CLI interface (`modes run`, `modes validate-input`)
+- CLI hardening and API freeze
 - `pyproject.toml` migration
 - Documentation freeze (`docs/` directory)
 - API stability policy published

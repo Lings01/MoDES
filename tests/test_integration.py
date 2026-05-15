@@ -1,6 +1,5 @@
 """Integration tests for the full MoDES pipeline."""
 
-import pytest
 import numpy as np
 import pandas as pd
 
@@ -18,7 +17,6 @@ def _build_known_data():
     Returns MoDEData, ground truth DataFrame, and tss_map.
     """
     from modes.data import MoDEData
-    import numpy as np
 
     # Only 4 genes/peaks with coordinates → only 4 real events
     gene_names = [

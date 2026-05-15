@@ -41,7 +41,6 @@ def generate_benchmark_data(
 
     # Add filler to balance library sizes
     n_filler = 2000
-    total_events = n_events_per_state * len(state_configs)
     gene_names = []
     peak_names = []
     true_states = []
@@ -186,7 +185,7 @@ def main():
 
     metrics_df, accuracy = evaluate(truth, predicted)
 
-    print(f"\n[4/4] Results:")
+    print("\n[4/4] Results:")
     print(f"      Overall accuracy: {accuracy}")
     print(f"      Runtime: {time.time() - t0:.1f}s")
     print()

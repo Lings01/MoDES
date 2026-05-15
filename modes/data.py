@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -154,7 +154,7 @@ class MoDEData:
             Otherwise checks adata.obsm['atac'].
         """
         try:
-            import anndata
+            import anndata  # noqa: F401
         except ImportError:
             raise ImportError("anndata is required for from_anndata()")
 
@@ -236,7 +236,7 @@ class MoDEData:
         MoDEData with pseudobulk samples.
         """
         try:
-            import anndata
+            import anndata  # noqa: F401
         except ImportError:
             raise ImportError("anndata is required for from_pseudobulk()")
 

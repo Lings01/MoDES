@@ -1,7 +1,5 @@
 """Tests for EventCandidateBuilder."""
 
-import pytest
-import numpy as np
 import pandas as pd
 
 from modes.events import EventCandidateBuilder, _parse_peak_name

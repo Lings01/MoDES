@@ -43,7 +43,7 @@ All notable changes to MoDES will be documented in this file.
 - Event candidates require `external_links`, `genome_annotation`, or `tss_map`
 - No native spatial graph model (spatial data usable only via pseudobulk)
 - No native cell-level mixed model
-- No CLI interface
+- CLI interface is experimental (`modes run`, `modes validate-input`)
 - Fixed-effect donor/batch (no random effects)
 - Single linked-peak conditional model (no cis-ATAC score aggregation)
 - `state_confidence` is not a calibrated posterior probability

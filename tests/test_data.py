@@ -158,7 +158,6 @@ def test_from_pseudobulk_minimal_anndata():
 def test_zero_library_size_rejected(synthetic_bulk_data):
     data, _, _ = synthetic_bulk_data
     data.rna.iloc[0, :] = 0
-    import pytest
     with pytest.raises(ValueError, match="zero RNA library size"):
         data.get_library_sizes()
 
@@ -166,7 +165,6 @@ def test_zero_library_size_rejected(synthetic_bulk_data):
 def test_cpm_normalization_rejects_zero_library(synthetic_bulk_data):
     data, _, _ = synthetic_bulk_data
     data.rna.iloc[0, :] = 0
-    import pytest
     with pytest.raises(ValueError):
         data.normalize_library_size(method="cpm")
 

@@ -8,7 +8,8 @@ Usage:
     python benchmarks/semi_real_spikein/run_spikein.py
 """
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import numpy as np
@@ -75,7 +76,6 @@ def main():
     predicted = [pred_map.get(g, "null") for g in gene_names]
     truth = true_states
 
-    from collections import Counter
     correct = sum(p == t for p, t in zip(predicted, truth))
     acc = correct / len(truth)
 

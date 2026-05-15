@@ -13,7 +13,8 @@ Usage:
     python benchmarks/baseline_comparison/run_baseline.py
 """
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import numpy as np
@@ -100,8 +101,8 @@ def main():
     print("=" * 50)
     print(f"MoDES accuracy: {modes_correct / n_events:.2f}")
     print(f"Naive  accuracy: {naive_correct / n_events:.2f}")
-    print(f"MoDES uses conditional decomposition + empirical Bayes refinement.")
-    print(f"Naive uses only per-modality significance + direction matching.")
+    print("MoDES uses conditional decomposition + empirical Bayes refinement.")
+    print("Naive uses only per-modality significance + direction matching.")
 
     out = os.path.join(os.path.dirname(__file__), "output")
     os.makedirs(out, exist_ok=True)

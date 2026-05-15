@@ -5,7 +5,8 @@ Usage:
     python benchmarks/negative_control/run_negative_control.py
 """
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import numpy as np
@@ -57,7 +58,7 @@ def main():
 
     print("Negative Control Benchmark")
     print("=" * 40)
-    print(f"Condition labels: shuffled (no true signal)")
+    print("Condition labels: shuffled (no true signal)")
     print(f"Events: {len(result.event_table)}")
     print(f"Null fraction: {null_frac:.2f} (expected: high)")
     print(f"State distribution: {dict(state_counts)}")

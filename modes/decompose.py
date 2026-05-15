@@ -246,7 +246,7 @@ class ConditionalDecomposition:
             if self.contrast is not None:
                 ref_label, tgt_label = self.contrast[0], self.contrast[1]
             else:
-                ref_label = categories[0]
+                ref_label = categories[0]  # noqa: F841
                 tgt_label = categories[1]
             cond_col = (cond == tgt_label).astype(float)
 

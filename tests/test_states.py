@@ -1,10 +1,8 @@
 """Tests for EvidenceBuilder and StateClassifier."""
 
 import pytest
-import numpy as np
 import pandas as pd
 
-from modes._types import ModalityEffect
 from modes.states import EvidenceBuilder, StateClassifier, summarize_states
 
 

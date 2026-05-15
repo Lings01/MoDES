@@ -5,7 +5,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from modes import MoDES, MoDESResult, MoDEData
+from modes import MoDES
 
 
 class TestMoDES:
@@ -207,7 +207,7 @@ def test_no_annotation_raises_clear_error(synthetic_bulk_data_small):
     # Replace gene names with plain symbols (no coordinates)
     data.rna.columns = ["STAT1", "GZMB", "IL7R"] + list(data.rna.columns[3:])
 
-    modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
+    _modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")  # noqa: F841
 
     # tss_map only has entries for original gene names, not STAT1/GZMB/IL7R
     # Since some genes still match and some don't, we need to check that
