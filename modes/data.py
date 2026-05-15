@@ -318,6 +318,12 @@ class MoDEData:
             if c != "_group"
         })
 
+        # Add cell counts and library sizes per pseudobulk group
+        obs_agg["n_cells"] = obs_sub.groupby("_group").size()
+        obs_agg["rna_total_counts"] = rna_pb.sum(axis=1)
+        obs_agg["atac_total_counts"] = atac_pb.sum(axis=1)
+        obs_agg["group_id"] = obs_agg.index.astype(str)
+
         # Build context label
         context_parts = [c for c in groupby if c not in (donor_col,)]
         obs_agg["context"] = obs_agg[context_parts].astype(str).agg("_".join, axis=1)

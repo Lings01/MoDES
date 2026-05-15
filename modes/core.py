@@ -765,3 +765,55 @@ class MoDESResult:
         """Generate HTML report."""
         from modes.report import generate_report
         generate_report(self, path)
+
+
+def run_by_context(
+    modes: "MoDES",
+    context_col: str = "context",
+    min_samples_per_context: int = 4,
+) -> pd.DataFrame:
+    """
+    Run MoDES separately for each context (e.g., cell type).
+
+    Parameters
+    ----------
+    modes : MoDES
+        Configured MoDES instance (without calling .run() yet).
+    context_col : str
+        Column in data.obs defining contexts (default: "context").
+    min_samples_per_context : int
+        Minimum samples required per context.
+
+    Returns
+    -------
+    DataFrame with all contexts' events, with context column.
+    """
+    all_events = []
+    contexts = modes.data.obs[context_col].unique()
+    for ctx in contexts:
+        ctx_mask = modes.data.obs[context_col] == ctx
+        n_ctx = ctx_mask.sum()
+        if n_ctx < min_samples_per_context:
+            continue
+        ctx_data = MoDEData(
+            rna=modes.data.rna.loc[ctx_mask],
+            atac=modes.data.atac.loc[ctx_mask],
+            obs=modes.data.obs.loc[ctx_mask],
+        )
+        ctx_modes = MoDES(
+            data=ctx_data,
+            condition_col=modes.condition_col,
+            covariate_cols=modes.covariate_cols,
+            donor_col=modes.donor_col,
+            batch_col=modes.batch_col,
+            fdr_threshold=modes.fdr_threshold,
+            external_links=modes.external_links,
+            tss_map=modes.tss_map,
+            contrast=modes.contrast,
+        )
+        result = ctx_modes.run()
+        result.event_table["context"] = ctx
+        all_events.append(result.event_table)
+    if all_events:
+        return pd.concat(all_events, ignore_index=True)
+    return pd.DataFrame(columns=_event_result_columns())
