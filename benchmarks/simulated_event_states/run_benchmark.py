@@ -32,15 +32,15 @@ def generate_benchmark_data(
 
     # Define states and their effect patterns
     state_configs = [
-        ("concordant", (5.0, 4.0)),
-        ("chromatin_primed", (5.0, 0.0)),
-        ("rna_only", (0.0, 4.0)),
-        ("discordant_opposite", (4.0, -3.0)),
+        ("concordant", (2.0, 2.0)),
+        ("chromatin_primed", (2.0, 0.0)),
+        ("rna_only", (0.0, 2.0)),
+        ("discordant_opposite", (2.0, -1.5)),
         ("null", (0.0, 0.0)),
     ]
 
     # Add filler to balance library sizes
-    n_filler = 500
+    n_filler = 2000
     total_events = n_events_per_state * len(state_configs)
     gene_names = []
     peak_names = []
@@ -72,25 +72,53 @@ def generate_benchmark_data(
 
     baseline_rna_ctrl = np.concatenate([
         rng.poisson(300, n_real),
-        rng.poisson(500, n_filler),
+        rng.poisson(800, n_filler),
     ]).astype(float)
     baseline_atac_ctrl = np.concatenate([
         rng.poisson(200, n_real),
         rng.poisson(400, n_filler),
     ]).astype(float)
 
-    for s in range(n_total):
-        if condition[s] == "ctrl":
-            rna[s, :] = rng.poisson(baseline_rna_ctrl)
-            atac[s, :] = rng.poisson(baseline_atac_ctrl)
-        else:
-            rna_trt = rng.poisson(baseline_rna_ctrl).astype(float)
-            atac_trt = rng.poisson(baseline_atac_ctrl).astype(float)
-            for i in range(n_real):
-                rna_trt[i] = float(rng.poisson(np.exp(rna_effects[i]) * baseline_rna_ctrl[i]))
-                atac_trt[i] = float(rng.poisson(np.exp(atac_effects[i]) * baseline_atac_ctrl[i]))
-            rna[s, :] = rna_trt
-            atac[s, :] = atac_trt
+    # For null events: generate paired null values (one pair per ctrl-trt pair).
+    # Each ctrl[i] and trt[i] share the same baseline for null genes,
+    # ensuring zero condition effect for those features.
+    null_rna_pairs = rng.poisson(baseline_rna_ctrl[:n_real], (n_per_group, n_real)).astype(float)
+    null_atac_pairs = rng.poisson(baseline_atac_ctrl[:n_real], (n_per_group, n_real)).astype(float)
+
+    for p in range(n_per_group):
+        ctrl_idx = p
+        trt_idx = n_per_group + p
+
+        # Both ctrl and trt use the pre-generated pair values for null genes
+        # and independent Poisson for signal genes
+        for i in range(n_real):
+            rna_eff = rna_effects[i]
+            atac_eff = atac_effects[i]
+
+            if rna_eff == 0.0:
+                # Paired null: same value for ctrl and trt → coef=0
+                val = null_rna_pairs[p, i]
+                rna[ctrl_idx, i] = val
+                rna[trt_idx, i] = val
+            else:
+                rna[ctrl_idx, i] = float(rng.poisson(baseline_rna_ctrl[i]))
+                rna[trt_idx, i] = float(rng.poisson(np.exp(rna_eff) * baseline_rna_ctrl[i]))
+
+            if atac_eff == 0.0:
+                val = null_atac_pairs[p, i]
+                atac[ctrl_idx, i] = val
+                atac[trt_idx, i] = val
+            else:
+                atac[ctrl_idx, i] = float(rng.poisson(baseline_atac_ctrl[i]))
+                atac[trt_idx, i] = float(rng.poisson(np.exp(atac_eff) * baseline_atac_ctrl[i]))
+
+        # Filler genes: same baseline for both
+        filler_rna = rng.poisson(baseline_rna_ctrl[n_real:])
+        filler_atac = rng.poisson(baseline_atac_ctrl[n_real:])
+        rna[ctrl_idx, n_real:] = filler_rna
+        rna[trt_idx, n_real:] = filler_rna  # identical filler → no library size bias
+        atac[ctrl_idx, n_real:] = filler_atac
+        atac[trt_idx, n_real:] = filler_atac
 
     obs = pd.DataFrame({"condition": condition}, index=[f"s{i}" for i in range(n_total)])
     rna_df = pd.DataFrame(rna, index=obs.index, columns=all_gene_names)
@@ -144,7 +172,7 @@ def main():
 
     t0 = time.time()
     print("\n[1/4] Generating benchmark data...")
-    data, gt, tss_map = generate_benchmark_data(n_per_group=15, n_events_per_state=10)
+    data, gt, tss_map = generate_benchmark_data(n_per_group=8, n_events_per_state=10)
     print(f"      {len(data.gene_names)} genes, {data.n_samples} samples, {len(gt)} events")
 
     print("\n[2/4] Running MoDES...")
