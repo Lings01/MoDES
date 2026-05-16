@@ -98,3 +98,9 @@ modes run --rna rna.tsv --atac atac.tsv --metadata meta.tsv \
 modes validate-input --rna rna.tsv --atac atac.tsv \
   --metadata meta.tsv --condition condition --out validation.json
 ```
+
+## API Stability
+From v1.0.0-rc.1 onward, MoDES follows semantic versioning.
+Breaking API changes require a major version bump.
+This public API is **frozen** as of v1.0.0-rc.1.
+

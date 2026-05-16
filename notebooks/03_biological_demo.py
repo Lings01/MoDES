@@ -102,3 +102,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+## External Dataset Reference
+For a truly independent biological demo, download GSE166188 (Mimitou et al. 2021, Nature Biotechnology):
+- PBMC stimulated vs control, 10x Multiome ATAC+Gene Expression
+- GEO: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE166188
+- Contains 12 samples with CD3/CD28 stimulation vs IL2-only control
+

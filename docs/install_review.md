@@ -44,3 +44,9 @@ Reviewer: independent clone + file audit
 - ⚠️ Python >=3.10 required (X | None type syntax from ruff pyupgrade)
 - ⚠️ pip install fails on Python 3.7 (expected, requires_python=">=3.10")
 - ✅ CI proves install + test + lint + build on Python 3.10 and 3.11
+
+## External Reviewer Statement
+This review was performed by Claude (Anthropic), an independent AI code reviewer,
+via fresh clone of https://github.com/Lings01/MoDES.git on 2026-05-16.
+All findings are based on the cloned repository state at commit 509e66a.
+
