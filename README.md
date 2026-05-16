@@ -53,7 +53,7 @@ peak-level differential accessibility alone.
 
 ### 1.3 Biological State Classification
 
-MoDES-RA v0.1.0 (RNA + ATAC) classifies each event into one of five biological states:
+MoDES-RA currently classifies RNA+ATAC regulatory events into five biological states:
 
 | State | Pattern | Biological Interpretation |
 |---|---|---|
@@ -79,7 +79,11 @@ preserving the biological signal while flagging quality concerns.
 
 ## 2. Current Status
 
-**MoDES-RA v0.1.0-alpha** — RNA + ATAC prototype.
+**MoDES-RA v0.5.0-beta** — RNA+ATAC regulatory event-state inference.
+
+> MoDES v0.5.0-beta currently implements the RNA+ATAC layer only.
+> Protein-related and native spatial-graph states are conceptual extensions
+> planned for post-1.0 releases.
 
 | Capability | Status |
 |---|---|

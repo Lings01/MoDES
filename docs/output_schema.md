@@ -32,6 +32,7 @@ One row per candidate regulatory event (peak-gene pair in a given context).
 | `artifact_reason` | str | — | Yes | Semicolon-separated reasons |
 | `event_pval` | float | [0, 1] | No | Event-level p-value |
 | `event_fdr` | float | [0, 1] | No | Event-level BH-corrected FDR |
+| `quality_score` | float | [0, 1] | No | Event quality score |
 | `atac_coef` | float | ℝ | No | Condition effect on ATAC (logFC scale) |
 | `atac_se` | float | (0, ∞) | No | Standard error |
 | `atac_pval` | float | [0, 1] | No | ATAC p-value |
@@ -46,7 +47,6 @@ One row per candidate regulatory event (peak-gene pair in a given context).
 | `rna_after_atac_se` | float | (0, ∞) | No | Standard error |
 | `rna_after_atac_pval` | float | [0, 1] | No | Conditional p-value |
 | `rna_after_atac_fdr` | float | [0, 1] | No | Conditional BH-corrected FDR |
-| `quality_score` | float | [0, 1] | No | Event quality score |
 
 ### State Definitions
 

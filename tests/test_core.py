@@ -253,20 +253,19 @@ def test_report_escapes_html(synthetic_bulk_data_small, tmp_path):
 
 
 def test_event_table_schema_exact(synthetic_bulk_data_small):
-    """Output schema must match the frozen v1.1 column order."""
+    """Output schema must match the frozen column order."""
     data, _, tss_map = synthetic_bulk_data_small
     modes = MoDES(data=data, tss_map=tss_map, condition_col="condition")
     result = modes.run()
 
     expected = [
         "event_id", "tf_name", "peak_id", "gene", "context",
+        "state", "state_confidence", "artifact_risk", "artifact_reason",
+        "event_pval", "event_fdr", "quality_score",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
-        "state", "state_confidence", "quality_score",
-        "artifact_risk", "artifact_reason",
-        "event_pval", "event_fdr",
     ]
     assert list(result.event_table.columns) == expected
 
