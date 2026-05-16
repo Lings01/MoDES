@@ -205,6 +205,9 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     gt.to_csv(os.path.join(out_dir, "truth.tsv"), sep="\t", index=False)
     result.to_tsv(os.path.join(out_dir, "moDES_output"))
+    # Copy main table as predicted_event_table.tsv
+    import shutil
+    shutil.copy(os.path.join(out_dir, "moDES_output", "event_table.tsv"), os.path.join(out_dir, "predicted_event_table.tsv"))
     metrics_df.to_csv(os.path.join(out_dir, "metrics.tsv"), sep="\t", index=False)
 
     # Confusion matrix

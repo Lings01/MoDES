@@ -1,26 +1,24 @@
 # Release Checklist
 
 ## Pre-release
-
-- [ ] CI green (pytest + lint)
-- [ ] All unit tests pass (`python -m pytest -q`)
-- [ ] Lint passes (`ruff check modes/ tests/ benchmarks/ examples/`)
-- [ ] Quick benchmarks pass
-- [ ] Example runs (`python examples/minimal_bulk/run_minimal.py`)
-- [ ] README up to date with current capabilities
-- [ ] CHANGELOG.md updated for this version
-- [ ] ROADMAP.md reflects current plans
-- [ ] `docs/release_checklist.md` reviewed
-- [ ] `docs/output_schema.md` matches actual output columns
+- [x] CI green (pytest + lint) — 3 jobs on Python 3.10/3.11
+- [x] All unit tests pass (`python -m pytest -q`) — 91 tests
+- [x] Lint passes (`ruff check modes/ tests/ benchmarks/ examples/`)
+- [x] Quick benchmarks pass (`--quick` mode, synthetic + negative control)
+- [x] Example runs (`python examples/minimal_bulk/run_minimal.py`)
+- [x] README up to date with current capabilities
+- [x] CHANGELOG.md updated for this version
+- [x] ROADMAP.md reflects current plans
+- [x] docs/output_schema.md matches actual output columns
+- [x] docs/api_reference.md complete
 
 ## Release
-
-- [ ] Version bumped in `setup.py`
-- [ ] Version bumped in `CHANGELOG.md`
-- [ ] Git tag created (`git tag vX.Y.Z`)
-- [ ] Tag pushed (`git push origin --tags`)
+- [x] Version bumped in setup.py (`0.5.0-beta`)
+- [x] pyproject.toml present for build
+- [x] Git tag created (`v0.5.0-beta`)
+- [x] Tag pushed (`git push origin --tags`)
+- [ ] GitHub Release page created with changelog notes
 
 ## Post-release
-
-- [ ] GitHub Release page created with changelog notes
-- [ ] CI badge shows green in README
+- [x] CI badge shows green in README
+- [ ] PyPI publish (when ready for v1.0)
