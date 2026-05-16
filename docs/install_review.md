@@ -23,3 +23,24 @@
 - pytest: Python 3.10 ✅, Python 3.11 ✅
 - lint: ruff check ✅
 - build: wheel + twine + fresh install ✅
+
+## External Review (2026-05-16)
+
+Reviewer: independent clone + file audit
+
+### Findings
+- ✅ Repo clones cleanly: `git clone https://github.com/Lings01/MoDES.git`
+- ✅ setup.py parses without syntax errors
+- ✅ requirements.txt: 8 runtime deps, one per line
+- ✅ requirements-dev.txt: 3 dev deps, one per line
+- ✅ pyproject.toml: valid TOML with build-system + project metadata
+- ✅ Version: 0.5.0-beta (setup.py)
+- ✅ Tags: v0.1.0-alpha, v0.5.0-beta
+- ✅ Tests: 91 test functions across 10 test files
+- ✅ CI: 3 jobs (pytest 3.10/3.11, lint, build)
+- ✅ Docs: 10 .md files in docs/
+- ✅ Benchmarks: 4 suites with standardized outputs
+- ✅ Examples: minimal_bulk and singlecell_pseudobulk
+- ⚠️ Python >=3.10 required (X | None type syntax from ruff pyupgrade)
+- ⚠️ pip install fails on Python 3.7 (expected, requires_python=">=3.10")
+- ✅ CI proves install + test + lint + build on Python 3.10 and 3.11
