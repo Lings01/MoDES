@@ -73,10 +73,20 @@ class ConditionalDecomposition:
         """
         records = []
         rna_ls, _ = data.get_library_sizes()
-        # Pre-build event-to-gene map (used for attenuation, cis_score, etc.)
         event_to_gene = dict(zip(events["event_id"], events["gene"]))
 
-        if self.conditional_mode == "cis_score":
+        # "auto" mode: use cis_score for large event sets
+        mode = self.conditional_mode
+        if mode == "auto":
+            unique_genes = events["gene"].nunique()
+            n_events = len(events)
+            mean_links = n_events / max(unique_genes, 1)
+            if n_events > 50000 or mean_links > 5:
+                mode = "cis_score"
+            else:
+                mode = "single_peak"
+
+        if mode == "cis_score":
             # Pre-compute per-gene cis_ATAC_score from all linked peaks
             gene_to_peaks = {}
             for _, event in events.iterrows():

@@ -40,6 +40,7 @@ class EffectEstimator:
         contrast: tuple | None = None,
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
+        cov_type: str = "nonrobust",
     ):
         self.condition_col = condition_col
         self.covariate_cols = covariate_cols or []
@@ -49,6 +50,7 @@ class EffectEstimator:
         self.contrast = contrast
         self.allow_poisson_fallback = allow_poisson_fallback
         self.allow_simplified_fallback = allow_simplified_fallback
+        self.cov_type = cov_type
 
     def estimate_atac_effects(
         self,
@@ -277,6 +279,7 @@ class EffectEstimator:
             y, X, offset,
             allow_poisson=self.allow_poisson_fallback,
             allow_simplified=self.allow_simplified_fallback,
+            cov_type=self.cov_type,
         )
 
         def _build_summary(res) -> dict:
@@ -393,6 +396,7 @@ def _safe_fit_nb_glm(
     offset: np.ndarray = None,
     allow_poisson: bool = True,
     allow_simplified: bool = False,
+    cov_type: str = "nonrobust",
 ) -> Any | None:
     """
     Fit NB GLM with fallback handling.
@@ -418,7 +422,7 @@ def _safe_fit_nb_glm(
                 offset=offset_adj,
                 family=sm.families.NegativeBinomial(),
             )
-            result = model.fit(maxiter=100, disp=0)
+            result = model.fit(maxiter=100, disp=0, cov_type=cov_type)
 
         if getattr(result, "converged", False):
             result._modes_model_used = "nb_default_alpha"
@@ -437,7 +441,7 @@ def _safe_fit_nb_glm(
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            result2 = model2.fit(maxiter=100, disp=0)
+            result2 = model2.fit(maxiter=100, disp=0, cov_type=cov_type)
 
         if getattr(result2, "converged", False):
             result2._modes_model_used = "nb_fixed_alpha"
@@ -457,7 +461,7 @@ def _safe_fit_nb_glm(
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                result3 = model3.fit(maxiter=200, disp=0)
+                result3 = model3.fit(maxiter=200, disp=0, cov_type=cov_type)
             result3._modes_model_used = "poisson_fallback"
             result3._modes_family = "poisson"
             result3._modes_alpha = None
@@ -487,7 +491,7 @@ def _safe_fit_nb_glm(
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                result = model.fit(maxiter=100, disp=0)
+                result = model.fit(maxiter=100, disp=0, cov_type=cov_type)
             result._modes_model_used = "nb_simple_fallback"
             result._modes_family = "negative_binomial"
             result._modes_alpha = 1.0

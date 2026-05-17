@@ -55,15 +55,17 @@ class TestEmpiricalBayes:
 class TestQualityScore:
     def test_good_quality(self):
         counts = np.random.poisson(50, 100)
-        score = compute_quality_score(counts, None)
-        assert 0 <= score <= 1
-        assert score > 0.5  # high counts should have good quality
+        qc = compute_quality_score(counts, None)
+        assert 0 <= qc["quality_score"] <= 1
+        assert qc["quality_score"] > 0.5
+        assert "detection_score" in qc
+        assert "depth_score" in qc  # high counts should have good quality
 
     def test_poor_quality(self):
         counts = np.array([0] * 90 + [1] * 10)
-        score = compute_quality_score(counts, None)
-        assert score < 0.5
+        qc = compute_quality_score(counts, None)
+        assert qc["quality_score"] < 0.5
 
     def test_empty(self):
-        score = compute_quality_score(np.array([]), None)
-        assert score == 0.0
+        qc = compute_quality_score(np.array([]), None)
+        assert qc["quality_score"] == 0.0

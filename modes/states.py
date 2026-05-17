@@ -77,17 +77,15 @@ class EvidenceBuilder:
                     coef=0, se=1e6, z_score=0, p_value=1.0
                 )
 
-            # Quality score from both ATAC and RNA
+            # Quality scores with components (P0 opt: use new dict API + batch labels)
+            batch_labels = data.obs["batch"].values if "batch" in data.obs.columns else None
             quality = 0.5
             if peak in data.atac.columns:
-                atac_qual = compute_quality_score(data.atac[peak].values, None)
-            else:
-                atac_qual = 0.5
+                atac_qc = compute_quality_score(data.atac[peak].values, batch_labels)
+                quality = 0.6 * atac_qc.get("quality_score", 0.5)
             if gene in data.rna.columns:
-                rna_qual = compute_quality_score(data.rna[gene].values, None)
-            else:
-                rna_qual = 0.5
-            quality = 0.6 * atac_qual + 0.4 * rna_qual
+                rna_qc = compute_quality_score(data.rna[gene].values, batch_labels)
+                quality = 0.6 * quality + 0.4 * rna_qc.get("quality_score", 0.5)
 
             evidence = EventEvidence(
                 event_id=eid,

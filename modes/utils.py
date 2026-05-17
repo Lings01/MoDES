@@ -102,51 +102,46 @@ def _trigamma_inverse(x: float) -> float:
 def compute_quality_score(
     counts: np.ndarray,
     batch_labels: np.ndarray = None,
-) -> float:
+) -> dict:
     """
-    Compute quality score q_e in [0, 1] for a feature.
-
-    Factors:
-      - mean non-zero proportion across samples
-      - mean count level (log-scale, normalized)
-      - batch association (Cramer's V, if batch provided)
-
-    Returns a score in [0, 1] where 1 is highest quality.
+    Compute quality components for a feature. Returns dict with:
+      - detection_score: fraction of non-zero samples [0, 1]
+      - depth_score: log-scaled mean count [0, 1]
+      - batch_score: Kruskal-Wallis p-value [0, 1] (1 = no batch effect)
+      - quality_score: weighted geometric mean [0, 1]
     """
     counts = np.asarray(counts, dtype=float)
     n = len(counts)
-
     if n == 0:
-        return 0.0
+        return {"detection_score": 0.0, "depth_score": 0.0,
+                "batch_score": 1.0, "quality_score": 0.0}
 
-    # Fraction of samples with non-zero counts
     nonzero_frac = np.mean(counts > 0)
-
-    # Mean expression level (log-scale, normalized to [0,1] via logistic)
     mean_count = np.mean(counts)
-    if mean_count > 0:
-        expr_score = 1.0 - np.exp(-mean_count / max(np.mean(counts[counts > 0]) if np.any(counts > 0) else 1, 1))
-    else:
-        expr_score = 0.0
+    max_possible = np.log(max(mean_count, 1) + 1)
+    depth_score = min(np.log(mean_count + 1) / max(max_possible, 0.01), 1.0) if mean_count > 0 else 0.0
 
-    # Batch association score (1 = no batch effect)
     batch_score = 1.0
     if batch_labels is not None and len(np.unique(batch_labels)) > 1:
         try:
             from scipy.stats import kruskal
             groups = [counts[batch_labels == b] for b in np.unique(batch_labels)]
             _, pval = kruskal(*groups)
-            batch_score = pval  # high p-value = no batch effect = high quality
+            batch_score = float(np.clip(pval, 0.0, 1.0))
         except Exception:
             pass
 
-    # Weighted geometric mean
-    scores = [nonzero_frac, expr_score, batch_score]
+    scores = [nonzero_frac, depth_score, batch_score]
     weights = [0.4, 0.3, 0.3]
     log_score = sum(w * np.log(max(s, 1e-10)) for w, s in zip(weights, scores))
     quality = np.exp(log_score)
 
-    return float(np.clip(quality, 0.0, 1.0))
+    return {
+        "detection_score": float(nonzero_frac),
+        "depth_score": float(depth_score),
+        "batch_score": float(batch_score),
+        "quality_score": float(np.clip(quality, 0.0, 1.0)),
+    }
 
 
 def compute_feature_quality_scores(

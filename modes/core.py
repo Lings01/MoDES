@@ -79,7 +79,7 @@ class MoDES:
         contrast: tuple | None = None,
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
-        conditional_mode: str = "single_peak",
+        conditional_mode: str = "auto",
     ):
         self.data = data
         self.condition_col = condition_col
