@@ -15,8 +15,8 @@ from modes.events import EventCandidateBuilder
 from modes.states import EvidenceBuilder, StateClassifier
 
 
-def _event_result_columns():
-    return [
+def _event_result_columns(extra_mod_names: list[str] | None = None):
+    base = [
         "event_id", "tf_name", "peak_id", "gene", "context",
         "state", "state_confidence", "quality_score",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
@@ -26,6 +26,14 @@ def _event_result_columns():
         "artifact_risk", "artifact_reason",
         "event_pval", "event_fdr",
     ]
+    # v2.0: append extra modality columns (coef, se, pval, fdr, direction)
+    for mod_name in (extra_mod_names or []):
+        base.extend([
+            f"{mod_name}_coef", f"{mod_name}_se",
+            f"{mod_name}_pval", f"{mod_name}_fdr",
+            f"{mod_name}_direction",
+        ])
+    return base
 
 
 def _read_optional_tsv(output_dir: str, filename: str):
@@ -288,6 +296,8 @@ class MoDES:
 
     def _assemble_results(self) -> MoDESResult:
         """Combine all pipeline outputs into MoDESResult."""
+        # v2.0: detect extra modality names
+        extra_mod_names = [m for m in self.effects if m not in ("rna", "atac")]
         if self.events is None or len(self.events) == 0:
             params = {
                 "condition_col": self.condition_col,
@@ -301,7 +311,7 @@ class MoDES:
                 "n_peaks": self.data.n_peaks,
             }
             return MoDESResult(
-                event_table=pd.DataFrame(columns=_event_result_columns()),
+                event_table=pd.DataFrame(columns=_event_result_columns(extra_mod_names)),
                 params=params,
             )
 
@@ -315,6 +325,19 @@ class MoDES:
         ev_map = {}
         for _, er in self.evidence.iterrows():
             ev_map[er["event_id"]] = er
+
+        # v2.0: pre-build protein gene→feature map from protein_gene_links
+        prot_gene_map = {}
+        for mod_name in extra_mod_names:
+            spec = self.data.modality_specs.get(mod_name)
+            if spec and spec.assay == "PROTEIN":
+                links = getattr(self.data, 'protein_gene_links', None)
+                if links is not None and len(links) > 0:
+                    for _, lr in links.iterrows():
+                        g = str(lr["gene"])
+                        prot_gene_map[(mod_name, g)] = str(lr["protein_id"])
+                        gs = g.split(":")[0]
+                        prot_gene_map[(mod_name, gs)] = str(lr["protein_id"])
 
         # --- Pass 1: collect per-event data and compute event_pval ---
         raw_data = []
@@ -361,18 +384,27 @@ class MoDES:
             # Event-level p-value based on state
             atac_pval = atac.p_value if atac else 1.0
             rna_pval = rna.p_value if rna else 1.0
-            if state == "concordant":
-                event_pval = max(atac_pval, rna_pval)
-            elif state == "discordant_opposite":
+            if state in ("concordant", "discordant_opposite"):
                 event_pval = max(atac_pval, rna_pval)
             elif state == "chromatin_primed":
                 event_pval = atac_pval
             elif state == "rna_only":
                 event_pval = rna_pval
+            elif state in ("full_activation", "protein_opposite"):
+                event_pval = max(atac_pval, rna_pval)
+            elif state == "protein_buffered":
+                event_pval = rna_pval
+            elif state == "protein_memory":
+                event_pval = atac_pval
+            elif state in ("epigenomic_concordant", "repressive_concordant"):
+                event_pval = max(atac_pval, rna_pval)
+            elif state == "active_enhancer_primed":
+                event_pval = atac_pval
             else:
                 event_pval = 1.0
 
-            raw_data.append({
+            # v2.0: look up extra modality effects
+            row_data = {
                 "event_id": eid,
                 "peak_id": peak,
                 "gene": gene,
@@ -390,47 +422,78 @@ class MoDES:
                 "artifact_reason": artifact_reason,
                 "quality": quality,
                 "event_pval": event_pval,
-            })
+            }
+            for mod_name in extra_mod_names:
+                eff_dict = self.effects.get(mod_name, {})
+                spec = self.data.modality_specs.get(mod_name)
+                # Resolve feature key
+                if spec and spec.assay == "PROTEIN":
+                    feat_key = prot_gene_map.get((mod_name, gene))
+                    if feat_key is None:
+                        feat_key = prot_gene_map.get((mod_name, gene.split(":")[0]))
+                elif spec and spec.feature_type == "region":
+                    feat_key = peak
+                else:
+                    feat_key = gene
+                mod_eff = eff_dict.get(feat_key) if feat_key else None
+                if mod_eff is None and feat_key is not None:
+                    # Fuzzy match: strip |suffix
+                    for k, v in eff_dict.items():
+                        if str(k).split("|")[0] == str(feat_key).split("|")[0]:
+                            mod_eff = v
+                            break
+                row_data[f"{mod_name}_coef"] = mod_eff.coef if mod_eff else np.nan
+                row_data[f"{mod_name}_se"] = mod_eff.se if mod_eff else np.nan
+                row_data[f"{mod_name}_pval"] = mod_eff.p_value if mod_eff else 1.0
+                row_data[f"{mod_name}_fdr"] = mod_eff.fdr if mod_eff else 1.0
+                row_data[f"{mod_name}_direction"] = mod_eff.direction if mod_eff else 0
+            raw_data.append(row_data)
 
         # Event-level BH correction
         event_pvals = np.array([d["event_pval"] for d in raw_data])
         event_fdrs = benjamini_hochberg(event_pvals)
 
-        # --- Pass 2: build EventResult records ---
+        # --- Pass 2: build dict records with core + extra modality columns ---
         records = []
         for d, event_fdr in zip(raw_data, event_fdrs):
             atac = d["atac"]
             rna = d["rna"]
-            records.append(
-                EventResult(
-                    event_id=d["event_id"],
-                    tf_name=d["tf_name"],
-                    peak_id=d["peak_id"],
-                    gene=d["gene"],
-                    context=d["context"],
-                    atac_coef=atac.coef if atac else np.nan,
-                    atac_se=atac.se if atac else np.nan,
-                    atac_pval=atac.p_value if atac else 1.0,
-                    atac_fdr=atac.fdr if atac else 1.0,
-                    atac_direction=atac.direction if atac else 0,
-                    rna_coef=rna.coef if rna else np.nan,
-                    rna_se=rna.se if rna else np.nan,
-                    rna_pval=rna.p_value if rna else 1.0,
-                    rna_fdr=rna.fdr if rna else 1.0,
-                    rna_direction=rna.direction if rna else 0,
-                    rna_after_atac_coef=d["rna_after_coef"],
-                    rna_after_atac_se=d["rna_after_se"],
-                    rna_after_atac_pval=d["rna_after_pval"],
-                    rna_after_atac_fdr=d["rna_after_fdr"],
-                    state=d["state"],
-                    state_confidence=d["state_confidence"],
-                    quality_score=d["quality"],
-                    artifact_risk=d["artifact_risk"],
-                    artifact_reason=d["artifact_reason"],
-                    event_pval=d["event_pval"],
-                    event_fdr=float(event_fdr),
-                )
-            )
+            rec = {
+                "event_id": d["event_id"],
+                "tf_name": d["tf_name"],
+                "peak_id": d["peak_id"],
+                "gene": d["gene"],
+                "context": d["context"],
+                "state": d["state"],
+                "state_confidence": d["state_confidence"],
+                "quality_score": d["quality"],
+                "atac_coef": atac.coef if atac else np.nan,
+                "atac_se": atac.se if atac else np.nan,
+                "atac_pval": atac.p_value if atac else 1.0,
+                "atac_fdr": atac.fdr if atac else 1.0,
+                "atac_direction": atac.direction if atac else 0,
+                "rna_coef": rna.coef if rna else np.nan,
+                "rna_se": rna.se if rna else np.nan,
+                "rna_pval": rna.p_value if rna else 1.0,
+                "rna_fdr": rna.fdr if rna else 1.0,
+                "rna_direction": rna.direction if rna else 0,
+                "rna_after_atac_coef": d["rna_after_coef"],
+                "rna_after_atac_se": d["rna_after_se"],
+                "rna_after_atac_pval": d["rna_after_pval"],
+                "rna_after_atac_fdr": d["rna_after_fdr"],
+                "artifact_risk": d["artifact_risk"],
+                "artifact_reason": d["artifact_reason"],
+                "event_pval": d["event_pval"],
+                "event_fdr": float(event_fdr),
+            }
+            # v2.0: append extra modality columns
+            for mod_name in extra_mod_names:
+                rec[f"{mod_name}_coef"] = d.get(f"{mod_name}_coef", np.nan)
+                rec[f"{mod_name}_se"] = d.get(f"{mod_name}_se", np.nan)
+                rec[f"{mod_name}_pval"] = d.get(f"{mod_name}_pval", 1.0)
+                rec[f"{mod_name}_fdr"] = d.get(f"{mod_name}_fdr", 1.0)
+                rec[f"{mod_name}_direction"] = d.get(f"{mod_name}_direction", 0)
+            records.append(rec)
 
         import sys
 
@@ -467,8 +530,9 @@ class MoDES:
 
         model_diag = self._build_model_diagnostics()
 
+        columns = _event_result_columns(extra_mod_names)
         return MoDESResult(
-            event_table=pd.DataFrame([r.__dict__ for r in records]),
+            event_table=pd.DataFrame(records, columns=columns),
             state_probabilities=self.states.copy() if self.states is not None else None,
             layer_effects=self._build_layer_effects_df(),
             evidence_vectors=self.evidence.copy() if self.evidence is not None else None,
@@ -591,34 +655,31 @@ class MoDES:
         return self.modality_evidence
 
     def _build_model_diagnostics(self) -> pd.DataFrame:
-        """Collect model diagnostics from all effect estimates."""
+        """Collect model diagnostics from all effect estimates (v2.0: multi-modal)."""
+        def _add_modality_rows(feature_effects, modality_label):
+            out = []
+            for feat_id, e in (feature_effects or {}).items():
+                s = e.model_summary or {}
+                out.append({
+                    "feature_id": feat_id,
+                    "modality": modality_label,
+                    "model_used": s.get("model_used", "unknown"),
+                    "family": s.get("family", "unknown"),
+                    "alpha": s.get("alpha"),
+                    "alpha_estimated": s.get("alpha_estimated", False),
+                    "converged": s.get("converged", e.convergence),
+                    "dropped_covariates": s.get("dropped_covariates", False),
+                    "warning": s.get("warning", ""),
+                })
+            return out
+
         rows = []
-        for peak_id, e in (self.atac_effects or {}).items():
-            s = e.model_summary or {}
-            rows.append({
-                "feature_id": peak_id,
-                "modality": "ATAC",
-                "model_used": s.get("model_used", "unknown"),
-                "family": s.get("family", "unknown"),
-                "alpha": s.get("alpha"),
-                "alpha_estimated": s.get("alpha_estimated", False),
-                "converged": s.get("converged", e.convergence),
-                "dropped_covariates": s.get("dropped_covariates", False),
-                "warning": s.get("warning", ""),
-            })
-        for gene_name, e in (self.rna_effects or {}).items():
-            s = e.model_summary or {}
-            rows.append({
-                "feature_id": gene_name,
-                "modality": "RNA",
-                "model_used": s.get("model_used", "unknown"),
-                "family": s.get("family", "unknown"),
-                "alpha": s.get("alpha"),
-                "alpha_estimated": s.get("alpha_estimated", False),
-                "converged": s.get("converged", e.convergence),
-                "dropped_covariates": s.get("dropped_covariates", False),
-                "warning": s.get("warning", ""),
-            })
+        rows.extend(_add_modality_rows(self.atac_effects, "ATAC"))
+        rows.extend(_add_modality_rows(self.rna_effects, "RNA"))
+        for mod_name in self.effects:
+            if mod_name in ("rna", "atac"):
+                continue
+            rows.extend(_add_modality_rows(self.effects[mod_name], mod_name.upper()))
         return pd.DataFrame(rows)
 
 

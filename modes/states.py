@@ -379,6 +379,26 @@ class StateClassifier:
                                 state = "mark_only"
                                 break
 
+            # v2.0: Check spatial modalities (if no state assigned from molecular layers)
+            if state is None:
+                for mod_name in extra_mods:
+                    spec = self.modality_specs.get(mod_name)
+                    if spec is None or spec.assay != "SPATIAL":
+                        continue
+                    # Spatial evidence columns: neighbor_z, moran_z, edge_score
+                    neighbor_z = abs(float(row.get(f"{mod_name}_neighbor_z", 0.0)))
+                    moran_z = abs(float(row.get(f"{mod_name}_moran_z", 0.0)))
+                    edge_score = float(row.get(f"{mod_name}_edge_score", 0.0))
+                    if edge_score > 0.8:
+                        state = "spatial_edge_artifact"
+                    elif moran_z > 2.0 and neighbor_z > 2.0:
+                        state = "spatial_niche_driven"
+                    elif moran_z > 2.0 and neighbor_z <= 2.0:
+                        state = "spatial_region_specific"
+                    elif moran_z <= 2.0:
+                        state = "cell_intrinsic"
+                    break
+
             # Fall back to RNA+ATAC rules if no state was assigned from extra modalities
             if state is None:
                 if atac_sig and rna_sig and same_dir:
