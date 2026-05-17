@@ -17,6 +17,7 @@ setup(
         "matplotlib>=3.5",
         "seaborn>=0.11",
         "networkx>=2.6",
+        "scikit-learn>=1.0",
     ],
     python_requires=">=3.10",
     classifiers=[

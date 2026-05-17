@@ -1,6 +1,6 @@
 # API Reference
 
-## Public API (v1.0.0-rc.1)
+## Public API (v2.0.0)
 
 ```python
 from modes import MoDES, MoDEData, MoDESResult, EventCandidateBuilder

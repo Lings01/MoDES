@@ -118,8 +118,10 @@ def compute_quality_score(
 
     nonzero_frac = np.mean(counts > 0)
     mean_count = np.mean(counts)
-    max_possible = np.log(max(mean_count, 1) + 1)
-    depth_score = min(np.log(mean_count + 1) / max(max_possible, 0.01), 1.0) if mean_count > 0 else 0.0
+    # Reference log-scale: log(1 + ref_count) as anchor so depth_score reflects
+    # meaningful dynamic range instead of always saturating at ~1.
+    ref_count = max(np.percentile(counts, 95), 100.0)
+    depth_score = min(np.log(mean_count + 1) / max(np.log(ref_count + 1), 0.01), 1.0) if mean_count > 0 else 0.0
 
     batch_score = 1.0
     if batch_labels is not None and len(np.unique(batch_labels)) > 1:

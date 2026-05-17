@@ -94,10 +94,15 @@ class EvidenceBuilder:
             quality = 0.5
             if peak in data.atac.columns:
                 atac_qc = compute_quality_score(data.atac[peak].values, batch_labels)
-                quality = 0.6 * atac_qc.get("quality_score", 0.5)
+                atac_qs = atac_qc.get("quality_score", 0.5)
+            else:
+                atac_qs = 0.5
             if gene in data.rna.columns:
                 rna_qc = compute_quality_score(data.rna[gene].values, batch_labels)
-                quality = 0.6 * quality + 0.4 * rna_qc.get("quality_score", 0.5)
+                rna_qs = rna_qc.get("quality_score", 0.5)
+            else:
+                rna_qs = 0.5
+            quality = 0.6 * atac_qs + 0.4 * rna_qs
 
             evidence = EventEvidence(
                 event_id=eid,
@@ -126,15 +131,48 @@ class EvidenceBuilder:
             # v2.0: add extra modality evidence columns
             for mod_name, eff_dict in self.extra_effects.items():
                 spec = data.modality_specs.get(mod_name)
-                feature = peak if (spec and spec.feature_type == "region") else gene
-                mod_eff = eff_dict.get(feature)
-                # Try fuzzy match: strip |suffix from feature keys (CUT&Tag naming)
-                if mod_eff is None:
-                    for k, v in eff_dict.items():
-                        base = k.split("|")[0] if "|" in str(k) else str(k)
-                        if base == str(feature).split("|")[0]:
-                            mod_eff = v
-                            break
+                mod_eff = None
+
+                # Determine feature match strategy
+                if spec and spec.assay == "PROTEIN":
+                    # Use protein_gene_links to map gene → protein feature
+                    links = getattr(data, 'protein_gene_links', None)
+                    if links is not None and len(links) > 0:
+                        # Try exact gene match first, then short-name match
+                        matched = links[links["gene"] == gene]
+                        if len(matched) == 0:
+                            gene_short = str(gene).split(":")[0]
+                            matched = links[links["gene"].astype(str) == gene_short]
+                        for pid in matched["protein_id"].values:
+                            mod_eff = eff_dict.get(str(pid))
+                            if mod_eff:
+                                break
+                    # Fallback: try fuzzy match across all effect keys
+                    if mod_eff is None:
+                        for k, v in eff_dict.items():
+                            if str(k) == str(gene).split(":")[0]:
+                                mod_eff = v
+                                break
+                elif spec and spec.feature_type == "region":
+                    feature = peak
+                    mod_eff = eff_dict.get(feature)
+                    # Try fuzzy match: strip |suffix from feature keys (CUT&Tag naming)
+                    if mod_eff is None:
+                        for k, v in eff_dict.items():
+                            base = k.split("|")[0] if "|" in str(k) else str(k)
+                            if base == str(feature).split("|")[0]:
+                                mod_eff = v
+                                break
+                else:
+                    # Gene-like modality: match by gene name
+                    feature = gene
+                    mod_eff = eff_dict.get(feature)
+                    if mod_eff is None:
+                        for k, v in eff_dict.items():
+                            if str(k) == str(feature).split(":")[0]:
+                                mod_eff = v
+                                break
+
                 if mod_eff and np.isfinite(mod_eff.coef):
                     record[f"{mod_name}_z"] = mod_eff.z_score
                     record[f"{mod_name}_fdr"] = mod_eff.fdr
@@ -198,9 +236,31 @@ class StateClassifier:
 
     @classmethod
     def get_applicable_states(cls, modality_specs: dict | None = None) -> set:
-        """Return all applicable biological states for the given modalities."""
+        """Return all applicable biological states for the given modalities.
+
+        Delegates to the grammar module (modes.modalities.grammar) when available,
+        with static state sets as fallback.
+        """
         states = set(cls.BIOLOGICAL_STATES)
         if modality_specs:
+            try:
+                from modes.modalities.grammar import get_all_states
+                grammar_states = get_all_states(
+                    include_epigenomic=any(
+                        hasattr(s, 'is_epigenomic') and s.is_epigenomic()
+                        for s in modality_specs.values()
+                    ),
+                    include_protein=any(
+                        s.assay == "PROTEIN" for s in modality_specs.values()
+                    ),
+                    include_spatial=any(
+                        s.assay == "SPATIAL" for s in modality_specs.values()
+                    ),
+                )
+                return set(grammar_states)
+            except ImportError:
+                pass
+            # Fallback: static state sets
             for spec in modality_specs.values():
                 if hasattr(spec, 'is_epigenomic') and spec.is_epigenomic():
                     states |= cls.EPIGENOMIC_STATES
@@ -287,7 +347,39 @@ class StateClassifier:
                         state = "repressive_primed"
                     break
 
-            # Fall back to RNA+ATAC rules if no epigenomic state was assigned
+            # v2.0: Check protein modalities (if no epigenomic state assigned)
+            if state is None:
+                for mod_name in extra_mods:
+                    spec = self.modality_specs.get(mod_name)
+                    if spec is None or spec.assay != "PROTEIN":
+                        continue
+                    prot_sig = row.get(f"{mod_name}_fdr", 1.0) < self.fdr_threshold
+                    prot_dir = row.get(f"{mod_name}_direction", 0)
+                    if not prot_sig and not rna_sig and not atac_sig:
+                        continue
+                    rna_dir = row.get("rna_direction", 0)
+                    atac_dir = row.get("atac_direction", 0)
+                    if atac_sig and rna_sig and prot_sig and rna_dir == atac_dir and prot_dir == rna_dir:
+                        state = "full_activation"
+                    elif rna_sig and prot_sig and prot_dir != rna_dir:
+                        state = "protein_opposite"
+                    elif rna_sig and not prot_sig:
+                        state = "protein_buffered"
+                    elif not rna_sig and prot_sig:
+                        state = "protein_memory"
+                    break
+                # If no protein state assigned, check for mark_only (epigenomic mark without RNA/ATAC)
+                if state is None:
+                    for mod_name in extra_mods:
+                        spec = self.modality_specs.get(mod_name)
+                        is_epi = spec and spec.is_epigenomic() if hasattr(spec, 'is_epigenomic') else False
+                        if is_epi and not rna_sig and not atac_sig:
+                            epi_sig = row.get(f"{mod_name}_fdr", 1.0) < self.fdr_threshold
+                            if epi_sig:
+                                state = "mark_only"
+                                break
+
+            # Fall back to RNA+ATAC rules if no state was assigned from extra modalities
             if state is None:
                 if atac_sig and rna_sig and same_dir:
                     state = "concordant"
@@ -356,6 +448,10 @@ class StateClassifier:
         and computes state_confidence scores.
         """
         ev_cols = ["z_atac", "z_rna", "z_rna_given_atac"]
+        # v2.0: include extra modality z-scores in evidence vector space
+        extra_z_cols = [c for c in evidence.columns
+                       if c.endswith("_z") and c not in ev_cols]
+        ev_cols = ev_cols + extra_z_cols
 
         valid = evidence["quality_score"] > 0
         valid &= np.isfinite(evidence[ev_cols].values).all(axis=1)
@@ -366,8 +462,10 @@ class StateClassifier:
         ev = evidence.loc[valid, ev_cols].values
         state_labels = states.loc[valid, "state"].values
 
-        # EB states: biological categories only, excluding artifact_like
-        eb_states = [s for s in self.BIOLOGICAL_STATES if s in set(state_labels)]
+        # EB states: all biological categories found in the data (not just RA core)
+        eb_states = sorted(set(state_labels) - {"null"})
+        if "null" in set(state_labels):
+            eb_states.append("null")
         if len(eb_states) < 2:
             return states
 

@@ -32,6 +32,7 @@ class MoDEData:
         obs: pd.DataFrame,
         modalities: dict[str, pd.DataFrame] | None = None,
         modality_specs: dict | None = None,
+        protein_gene_links: pd.DataFrame | None = None,
     ):
         if not (rna.index.equals(atac.index) and rna.index.equals(obs.index)):
             raise ValueError(
@@ -43,6 +44,8 @@ class MoDEData:
         # v2.0: generic multi-modality support
         self.modalities = modalities or {"rna": self._rna, "atac": self._atac}
         self.modality_specs = modality_specs or {}
+        # v2.0: protein-to-gene mapping for protein state inference
+        self.protein_gene_links = protein_gene_links
 
     # -- Properties --
 
@@ -545,6 +548,13 @@ class MoDEData:
         if atac_counts is not None:
             atac = atac.loc[common]
         else:
+            import warnings as _w
+            _w.warn(
+                "No ATAC data provided; using dummy-zero ATAC matrix. "
+                "This disables chromatin-related and epigenomic_concordant state classification. "
+                "Only active_enhancer_primed, mark_only, and RNA-based states will be assigned.",
+                UserWarning,
+            )
             atac = pd.DataFrame(0, index=common, columns=["dummy_atac"])
 
         # Build modality specs
@@ -606,7 +616,8 @@ class MoDEData:
         specs = {"rna": RNA_SPEC, "atac": ATAC_SPEC, "protein": prot_spec}
         mods = {"rna": rna, "atac": atac, "protein": prot}
 
-        return cls(rna=rna, atac=atac, obs=obs, modalities=mods, modality_specs=specs)
+        return cls(rna=rna, atac=atac, obs=obs, modalities=mods,
+                   modality_specs=specs, protein_gene_links=links)
 
     # -- Methods --
 

@@ -2,6 +2,47 @@
 
 All notable changes to MoDES will be documented in this file.
 
+## v2.0.0
+
+### Added
+- Multi-modal data structures: `MoDEData.modalities` dict + `modality_specs`
+- Grammar-driven `StateClassifier` with 17 possible states across 5 grammars
+- RNA+ATAC core (5 states): concordant, chromatin_primed, rna_only, discordant_opposite, null
+- Epigenomic extension (4 states): epigenomic_concordant, active_enhancer_primed, repressive_concordant, repressive_primed, mark_only
+- Protein extension (4 states): full_activation, protein_buffered, protein_memory, protein_opposite
+- Spatial extension (4 states): spatial_region_specific, spatial_niche_driven, cell_intrinsic, spatial_edge_artifact
+- CUT&Tag target registry: H3K27ac, H3K4me1, H3K4me3, H3K27me3, H3K9me3, H3K36me3, CTCF, RAD21, TF
+- Generic modality effect estimation (`estimate_modality_effects`)
+- `EventCandidateBuilder`: O(G log P) interval index for event construction
+- Long-format `event_modality_evidence.tsv` output
+- CUT&Tag benchmark: RNA + H3K27ac CUT&Tag state recovery
+- Protein benchmark: RNA + ATAC + Protein state recovery
+- Tutorial notebook (Jupyter) with executed cells
+- Real-data tests: 10x PBMC, GSE166188, Visium spatial
+- `ModalitySpec` base class for abstract modal specification
+
+### Changed
+- Core pipeline: `self.effects` dict replaces hardcoded atac_effects/rna_effects
+- `EvidenceBuilder`: accepts extra_modality_effects for CUT&Tag/Protein
+- `StateClassifier`: grammar-driven, dynamic state selection based on available modalities
+- Dedup key now includes tf_name (peak+gene+tf) to preserve TF-specific events
+- Quality score: depth_score uses percentile-based reference (fixed saturation bug)
+- Quality combination: proper weighted average (0.6*atac + 0.4*rna, fixed 0.76 max bug)
+
+### Fixed
+- TF dedup: `peak_id|gene` → `peak_id|gene|tf_name` preserves TF-specific events
+- depth_score saturation: `log(mean+1)/log(ref+1)` with 95th percentile reference
+- Quality combination: `0.6*0.6*atac + 0.4*rna` → `0.6*atac + 0.4*rna`
+
+### Known Limitations
+- RNA+ATAC core is the only validated layer; CUT&Tag/Protein states are experimental
+- Binary condition only (two-group comparison)
+- `state_confidence` is not a calibrated posterior
+- Fixed-effect donor/batch (no random effects)
+- Conditional decomposition (Step 3) only decomposes RNA after ATAC
+
+---
+
 ## v0.5.0-beta
 
 ### Added

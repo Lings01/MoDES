@@ -74,21 +74,30 @@ def main():
     result = MoDES(data=data, condition_col="condition", tss_map=tss).run()
     t = time.time() - t0
 
-    # Evaluate (MoDES currently classifies events as RA states)
+    # Evaluate (v2.0: multi-modal protein states available)
     sc = result.event_table["state"].value_counts()
     print(f"\nRuntime: {t:.1f}s")
     print(f"Events: {len(result.event_table)}")
-    for s in ["concordant", "chromatin_primed", "rna_only", "null"]:
-        print(f"  {s:20s}: {sc.get(s, 0)}")
+    for s in ["full_activation", "protein_buffered", "protein_memory",
+              "concordant", "chromatin_primed", "rna_only", "null"]:
+        c = sc.get(s, 0)
+        if c > 0: print(f"  {s:20s}: {c}")
 
-    # Check: full_activation genes should be classified as concordant
+    # Check: ground-truth genes should be classified correctly
     pred = {}
     for _, r in result.event_table.iterrows():
-        g = str(r["gene"]).split(":")[0]
+        g = str(r["gene"])
         if g not in pred: pred[g] = r["state"]
 
-    full_act_correct = sum(1 for i in range(10) if pred.get(gene_names[i]) == "concordant")
-    print(f"\nFull activation → concordant: {full_act_correct}/10 detected")
+    full_act_correct = sum(1 for i in range(10)
+                          if pred.get(gene_names[i]) == "full_activation")
+    buffered_correct = sum(1 for i in range(10, 20)
+                          if pred.get(gene_names[i]) == "protein_buffered")
+    memory_correct = sum(1 for i in range(20, 25)
+                        if pred.get(gene_names[i]) == "protein_memory")
+    print(f"\nFull activation → full_activation: {full_act_correct}/10 detected")
+    print(f"Protein buffered → protein_buffered: {buffered_correct}/10 detected")
+    print(f"Protein memory → protein_memory: {memory_correct}/5 detected")
 
     # Check modality evidence output
     if result.modality_evidence is not None and len(result.modality_evidence) > 0:

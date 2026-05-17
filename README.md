@@ -53,15 +53,32 @@ peak-level differential accessibility alone.
 
 ### 1.3 Biological State Classification
 
-MoDES-RA currently classifies RNA+ATAC regulatory events into five biological states:
+MoDES v2.0 classifies regulatory events into biological states based on the available
+modalities. With RNA+ATAC (the core layer), five states are available:
 
 | State | Pattern | Biological Interpretation |
 |---|---|---|
-| `concordant` | ATAC↑ RNA↑ | Local chromatin opening drives transcriptional activation (intact cis-regulatory chain) |
+| `concordant` | ATAC↑ RNA↑ same direction | Local chromatin opening drives transcriptional activation (intact cis-regulatory chain) |
 | `chromatin_primed` | ATAC↑ RNA→ | Chromatin is open but transcription has not started (epigenetic priming) |
 | `rna_only` | ATAC→ RNA↑ | RNA change not explained by local chromatin (trans regulation, RNA stability, unmeasured layer) |
-| `discordant_opposite` | ATAC↑ RNA↓ or ATAC↓ RNA↑ | Opposite directions across layers; may indicate complex regulation or technical issues |
+| `discordant_opposite` | ATAC↑ RNA↓ opposite direction | Opposite directions across layers; may indicate complex regulation or technical issues |
 | `null` | ATAC→ RNA→ | No significant change under the current condition |
+
+When epigenomic (CUT&Tag) or protein data are provided via the v2.0 multi-modal API,
+additional states become available:
+
+| State | Required Modalities | Biological Interpretation |
+|---|---|---|
+| `epigenomic_concordant` | RNA+ATAC+CUT&Tag | Full concordance through chromatin, transcription, and histone modification |
+| `active_enhancer_primed` | RNA+CUT&Tag | Activating histone mark present without transcriptional change (poised enhancer) |
+| `repressive_concordant` | RNA+ATAC+CUT&Tag | Repressive histone mark accompanies transcriptional silencing |
+| `mark_only` | CUT&Tag | Histone mark change without detectable RNA or ATAC change |
+| `full_activation` | RNA+ATAC+Protein | Complete regulatory chain activation through to protein output |
+| `protein_buffered` | RNA+Protein | Transcriptional change buffered at the protein level |
+| `protein_memory` | RNA+Protein | Protein change persists after RNA returns to baseline |
+
+CUT&Tag and protein states are **experimental** — they extend the validated RNA+ATAC
+core and should be interpreted with additional caution.
 
 Each event also carries an **artifact_risk** flag:
 
@@ -79,23 +96,23 @@ preserving the biological signal while flagging quality concerns.
 
 ## 2. Current Status
 
-**MoDES-RA v1.0.0-rc.1** — RNA+ATAC regulatory event-state inference.
+**MoDES v2.0.0** — Multi-modal regulatory event-state inference.
 
-> MoDES v1.0.0-rc.1 currently implements the RNA+ATAC layer only.
-> Protein-related and native spatial-graph states are conceptual extensions
-> planned for post-1.0 releases.
+> The RNA+ATAC core is validated on real and synthetic data. Additional modality
+> support (CUT&Tag, Protein, Spatial) is available via the v2.0 multi-modal API
+> and is marked as experimental — inference quality depends on data characteristics
+> and experimental design.
 
 | Capability | Status |
 |---|---|
-| Bulk RNA+ATAC | ✅ Supported |
+| Bulk RNA+ATAC | ✅ Supported (validated core) |
 | Single-cell pseudobulk | ⚠️ Experimental |
 | Spatial region-pseudobulk | ⚠️ Experimental |
-| MuData (.h5mu) input | ⚠️ Experimental |
-| Sparse matrix aggregation | ⚠️ Experimental |
-| Native spatial graph | 🔮 Planned (v1.2) |
-| Protein layer | 🔮 Planned (v1.1) |
-| Multi-class condition | 🔮 Planned |
-| Time / pseudotime delay | 🔮 Planned |
+| MuData (.h5mu) multi-modal input | ⚠️ Experimental |
+| CUT&Tag (H3K27ac, H3K4me3, H3K27me3, etc.) | ⚠️ Experimental |
+| Protein (gene-linked abundance) | ⚠️ Experimental |
+| Spatial graph (Moran's I, neighbor effects) | ⚠️ Experimental |
+| Multi-condition / pseudotime | ⚠️ Experimental |
 
 ---
 
@@ -517,7 +534,7 @@ accompanied by transcriptional increase. Suitable for building core regulatory n
 
 1. **Check `artifact_risk` first**: prioritize `low` and `medium`; treat `high` with caution
 2. **Then check `state_confidence`**: events with > 0.8 are more reliable
-3. **Finally check `event_fdr`**: event-level FDR < 0.1 provides statistical guarantee
+3. **Finally check `event_fdr`**: event-level FDR < 0.1 provides a ranking heuristic derived from per-layer p-values; it is not calibrated under arbitrary dependence and should not be treated as a strict statistical guarantee
 
 Recommended filtering pipeline:
 

@@ -122,8 +122,8 @@ class MoDES:
         self.decompose()
         self.build_evidence()
         self.classify_states()
+        self._build_modality_evidence()  # v2.0: before _assemble so result includes it
         self.results = self._assemble_results()
-        self._build_modality_evidence()  # v2.0: long-format multi-modal evidence
         return self.results
 
     def build_events(
@@ -545,8 +545,33 @@ class MoDES:
                     continue
                 spec = self.data.modality_specs.get(mod_name)
                 eff_dict = self.effects.get(mod_name, {})
-                feature = gene if spec and spec.feature_type == "gene" else peak
-                mod_eff = eff_dict.get(feature)
+                mod_eff = None
+
+                if spec and spec.assay == "PROTEIN":
+                    links = getattr(self.data, 'protein_gene_links', None)
+                    if links is not None and len(links) > 0:
+                        matched = links[links["gene"].astype(str) == str(gene)]
+                        if len(matched) == 0:
+                            gene_short = str(gene).split(":")[0]
+                            matched = links[links["gene"].astype(str) == gene_short]
+                        for pid in matched["protein_id"].values:
+                            mod_eff = eff_dict.get(str(pid))
+                            if mod_eff:
+                                feature = str(pid)
+                                break
+                    if mod_eff is None:
+                        for k, v in eff_dict.items():
+                            if str(k) == str(gene).split(":")[0]:
+                                mod_eff = v
+                                feature = str(k)
+                                break
+                elif spec and spec.feature_type == "region":
+                    feature = peak
+                    mod_eff = eff_dict.get(feature)
+                else:
+                    feature = gene
+                    mod_eff = eff_dict.get(feature)
+
                 if mod_eff:
                     rows.append({
                         "event_id": eid, "modality": mod_name,

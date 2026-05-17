@@ -192,9 +192,12 @@ class EventCandidateBuilder:
         if motif_annotation is not None:
             candidates = self._assign_motifs(candidates, motif_annotation)
 
-        # P0 opt: dedup by biological key (peak_id + gene), not event_id
+        # P0 opt: dedup by biological key (peak_id + gene + tf_name), not event_id
         if not candidates.empty:
-            candidates["_bio_key"] = candidates["peak_id"] + "|" + candidates["gene"]
+            candidates["_bio_key"] = (
+                candidates["peak_id"] + "|" + candidates["gene"] + "|"
+                + candidates["tf_name"].fillna("")
+            )
             candidates.drop_duplicates(subset=["_bio_key"], inplace=True)
             candidates.drop(columns=["_bio_key"], inplace=True)
             candidates.reset_index(drop=True, inplace=True)
@@ -213,14 +216,21 @@ class EventCandidateBuilder:
             if col not in ext.columns:
                 raise ValueError(f"External links missing required column '{col}'")
 
-        # P0 opt: dedup by biological key (peak_id + gene), not event_id
-        existing_keys = set(candidates["peak_id"] + "|" + candidates["gene"])
+        # P0 opt: dedup by biological key (peak_id + gene + tf_name)
+        existing_keys = set(
+            candidates["peak_id"] + "|" + candidates["gene"] + "|"
+            + candidates["tf_name"].fillna("")
+        )
         ext_records = []
         for _, row in ext.iterrows():
-            bio_key = f"{row['peak_id']}|{row['gene']}"
+            row_tf = str(row.get("tf_name", "")) if pd.notna(row.get("tf_name")) else ""
+            bio_key = f"{row['peak_id']}|{row['gene']}|{row_tf}"
             if bio_key in existing_keys:
-                # Update existing candidate with TF info if available
-                mask = (candidates["peak_id"] == row["peak_id"]) & (candidates["gene"] == row["gene"])
+                mask = (
+                    (candidates["peak_id"] == row["peak_id"])
+                    & (candidates["gene"] == row["gene"])
+                    & (candidates["tf_name"].fillna("") == row_tf)
+                )
                 if "tf_name" in ext.columns and pd.notna(row.get("tf_name")):
                     candidates.loc[mask, "tf_name"] = row["tf_name"]
                 # Append source
