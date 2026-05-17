@@ -199,9 +199,16 @@ class MoDES:
         self.atac_effects, self.rna_effects = estimator.estimate_effects(
             self.data, peak_names, gene_names
         )
-        # v2.0: populate generic effects dict
+        # v2.0: populate generic effects dict + estimate additional modalities
         self.effects["atac"] = self.atac_effects
         self.effects["rna"] = self.rna_effects
+        for mod_name in self.data.modalities:
+            if mod_name in ("rna", "atac"):
+                continue
+            feat_names = list(self.data.modalities[mod_name].columns)
+            self.effects[mod_name] = estimator.estimate_modality_effects(
+                self.data, feat_names, modality_name=mod_name,
+            )
         return self.atac_effects, self.rna_effects
 
     def decompose(self) -> pd.DataFrame:

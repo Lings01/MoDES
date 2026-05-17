@@ -179,6 +179,47 @@ class EffectEstimator:
         rna_effects = self.estimate_rna_effects(data, gene_names)
         return atac_effects, rna_effects
 
+    def estimate_modality_effects(
+        self,
+        data,
+        feature_names: list[str],
+        modality_name: str = "generic",
+    ) -> dict[str, ModalityEffect]:
+        """v2.0: Generic effect estimation for any modality (CUT&Tag, Protein, etc)."""
+        effects = {}
+        rna_ls, atac_ls = data.get_library_sizes()
+        X_base = self._build_design_matrix(data)
+        # Use RNA library size for gene-like modalities, ATAC for region-like
+        spec = data.modality_specs.get(modality_name)
+        use_rna_offset = spec and spec.feature_type in ("gene", "protein")
+
+        for feature in feature_names:
+            mat = data.modalities.get(modality_name)
+            if mat is None or feature not in mat.columns:
+                continue
+            y = mat[feature].values.astype(float)
+            if _skip_feature(y, self.min_nonzero_samples, self.min_total_count):
+                effects[feature] = ModalityEffect(
+                    coef=0.0, se=1e6, z_score=0.0, p_value=1.0,
+                    convergence=False,
+                    model_summary={
+                        "model_used": "skipped_low_count",
+                        "warning": "Below detection threshold",
+                        "converged": False, "dropped_covariates": False,
+                    },
+                )
+                continue
+            offset = rna_ls if use_rna_offset else atac_ls
+            effect = self._fit_nb_glm(y, X_base, offset=offset, feature_name=feature)
+            effects[feature] = effect
+
+        pvals = np.array([e.p_value for e in effects.values()])
+        fdrs = benjamini_hochberg(pvals)
+        for (key, e), fdr in zip(effects.items(), fdrs):
+            e.fdr = float(fdr)
+            e.direction = int(np.sign(e.coef)) if np.isfinite(e.coef) and e.coef != 0 else 0
+        return effects
+
     def _build_design_matrix(
         self,
         data,
