@@ -165,7 +165,9 @@ def compute_feature_quality_scores(
     n_features = count_matrix.shape[1]
     qualities = np.zeros(n_features)
     for i in range(n_features):
-        qualities[i] = compute_quality_score(
-            count_matrix[:, i], metadata, batch_labels
+        qc = compute_quality_score(
+            count_matrix[:, i],
+            batch_labels=batch_labels,
         )
+        qualities[i] = qc["quality_score"]
     return qualities

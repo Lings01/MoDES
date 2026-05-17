@@ -80,6 +80,10 @@ class MoDES:
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
         conditional_mode: str = "auto",
+        cov_type: str = "nonrobust",
+        min_nonzero_samples: int = 3,
+        min_total_count: float = 10.0,
+        batch_col_quality: str | None = None,
     ):
         self.data = data
         self.condition_col = condition_col
@@ -95,6 +99,10 @@ class MoDES:
         self.allow_poisson_fallback = allow_poisson_fallback
         self.allow_simplified_fallback = allow_simplified_fallback
         self.conditional_mode = conditional_mode
+        self.cov_type = cov_type
+        self.min_nonzero_samples = min_nonzero_samples
+        self.min_total_count = min_total_count
+        self.batch_col_quality = batch_col_quality
 
         # Pipeline state
         self.events: pd.DataFrame | None = None
@@ -177,6 +185,9 @@ class MoDES:
             contrast=self.contrast,
             allow_poisson_fallback=self.allow_poisson_fallback,
             allow_simplified_fallback=self.allow_simplified_fallback,
+            cov_type=self.cov_type,
+            min_nonzero_samples=self.min_nonzero_samples,
+            min_total_count=self.min_total_count,
         )
 
         peak_names = list(self.events["peak_id"].unique())
@@ -226,7 +237,9 @@ class MoDES:
         if self.conditional_effects is None:
             raise RuntimeError("Call decompose() first")
 
-        builder = EvidenceBuilder()
+        builder = EvidenceBuilder(
+            batch_col=self.batch_col_quality or self.batch_col
+        )
         self.evidence = builder.build(
             events=self.events,
             atac_effects=self.atac_effects,
@@ -423,6 +436,10 @@ class MoDES:
             "fdr_threshold": self.fdr_threshold,
             "allow_poisson_fallback": self.allow_poisson_fallback,
             "allow_simplified_fallback": self.allow_simplified_fallback,
+            "cov_type": self.cov_type,
+            "conditional_mode": self.conditional_mode,
+            "min_nonzero_samples": self.min_nonzero_samples,
+            "min_total_count": self.min_total_count,
             "n_events": len(records),
             "n_samples": self.data.n_samples,
             "n_genes": self.data.n_genes,

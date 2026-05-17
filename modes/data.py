@@ -415,6 +415,25 @@ class MoDEData:
         adata_rna = mdata.mod[rna_mod]
         adata_atac = mdata.mod[atac_mod]
 
+        # P0: align obs_names between RNA and ATAC modalities
+        rna_obs = adata_rna.obs_names
+        atac_obs = adata_atac.obs_names
+        if not rna_obs.equals(atac_obs):
+            common = rna_obs.intersection(atac_obs)
+            if len(common) == 0:
+                raise ValueError(
+                    "RNA and ATAC modalities have no shared obs_names. "
+                    "Cannot construct paired multiome data."
+                )
+            import warnings as _w
+            _w.warn(
+                f"RNA and ATAC obs_names are not aligned. "
+                f"Aligning to {len(common)} shared cells.",
+                UserWarning,
+            )
+            adata_rna = adata_rna[common].copy()
+            adata_atac = adata_atac[common].copy()
+
         # Build a combined AnnData with ATAC in obsm
         if groupby is not None:
             obs_combined = adata_rna.obs.copy()

@@ -41,6 +41,8 @@ class EffectEstimator:
         allow_poisson_fallback: bool = True,
         allow_simplified_fallback: bool = False,
         cov_type: str = "nonrobust",
+        min_nonzero_samples: int = 3,
+        min_total_count: float = 10.0,
     ):
         self.condition_col = condition_col
         self.covariate_cols = covariate_cols or []
@@ -51,6 +53,8 @@ class EffectEstimator:
         self.allow_poisson_fallback = allow_poisson_fallback
         self.allow_simplified_fallback = allow_simplified_fallback
         self.cov_type = cov_type
+        self.min_nonzero_samples = min_nonzero_samples
+        self.min_total_count = min_total_count
 
     def estimate_atac_effects(
         self,
@@ -79,7 +83,7 @@ class EffectEstimator:
                 continue
             y = data.atac[peak].values.astype(float)
             # P0 opt: skip low-information features
-            if _skip_feature(y):
+            if _skip_feature(y, self.min_nonzero_samples, self.min_total_count):
                 effects[peak] = ModalityEffect(
                     coef=0.0, se=1e6, z_score=0.0, p_value=1.0,
                     convergence=False,
@@ -134,7 +138,7 @@ class EffectEstimator:
             if gene not in data.rna.columns:
                 continue
             y = data.rna[gene].values.astype(float)
-            if _skip_feature(y):
+            if _skip_feature(y, self.min_nonzero_samples, self.min_total_count):
                 effects[gene] = ModalityEffect(
                     coef=0.0, se=1e6, z_score=0.0, p_value=1.0,
                     convergence=False,

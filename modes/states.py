@@ -17,6 +17,9 @@ class EvidenceBuilder:
     D_e = [z_ATAC, z_RNA, z_RNA|ATAC, quality_score]
     """
 
+    def __init__(self, batch_col: str | None = None):
+        self.batch_col = batch_col
+
     def build(
         self,
         events: pd.DataFrame,
@@ -78,7 +81,8 @@ class EvidenceBuilder:
                 )
 
             # Quality scores with components (P0 opt: use new dict API + batch labels)
-            batch_labels = data.obs["batch"].values if "batch" in data.obs.columns else None
+            bc = self.batch_col or "batch"
+            batch_labels = data.obs[bc].values if bc in data.obs.columns else None
             quality = 0.5
             if peak in data.atac.columns:
                 atac_qc = compute_quality_score(data.atac[peak].values, batch_labels)
