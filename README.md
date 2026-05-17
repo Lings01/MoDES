@@ -79,9 +79,9 @@ preserving the biological signal while flagging quality concerns.
 
 ## 2. Current Status
 
-**MoDES-RA v0.5.0-beta** — RNA+ATAC regulatory event-state inference.
+**MoDES-RA v1.0.0-rc.1** — RNA+ATAC regulatory event-state inference.
 
-> MoDES v0.5.0-beta currently implements the RNA+ATAC layer only.
+> MoDES v1.0.0-rc.1 currently implements the RNA+ATAC layer only.
 > Protein-related and native spatial-graph states are conceptual extensions
 > planned for post-1.0 releases.
 

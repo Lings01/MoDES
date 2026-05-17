@@ -1,4 +1,4 @@
-# Fresh Install Review (v0.5.0-beta)
+# Fresh Install Review (v1.0.0-rc.1)
 
 ## Environment
 - Python: 3.10+ required (X | None syntax from ruff auto-fix)
@@ -34,8 +34,8 @@ Reviewer: independent clone + file audit
 - ✅ requirements.txt: 8 runtime deps, one per line
 - ✅ requirements-dev.txt: 3 dev deps, one per line
 - ✅ pyproject.toml: valid TOML with build-system + project metadata
-- ✅ Version: 0.5.0-beta (setup.py)
-- ✅ Tags: v0.1.0-alpha, v0.5.0-beta
+- ✅ Version: 1.0.0-rc.1 (setup.py)
+- ✅ Tags: v0.1.0-alpha, v1.0.0-rc.1
 - ✅ Tests: 91 test functions across 10 test files
 - ✅ CI: 3 jobs (pytest 3.10/3.11, lint, build)
 - ✅ Docs: 10 .md files in docs/

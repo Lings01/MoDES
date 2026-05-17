@@ -58,3 +58,20 @@ All notable changes to MoDES will be documented in this file.
 ## v0.1.0-alpha
 
 Initial release with core RNA+ATAC regulatory event state inference.
+
+## v1.0.0-rc.1
+
+### Added
+- Release candidate for stable RNA+ATAC MoDES-RA
+- API freeze candidate (semantic versioning from v1.0.0)
+- Output schema freeze (26 columns, user-friendly order)
+- Fresh clone / install review evidence
+- Benchmark and biological demo documentation
+- `pyproject.toml` as primary build entry
+
+### Known limitations
+- RNA+ATAC only (no native protein layer)
+- Binary condition only (two-group comparison)
+- Native spatial graph planned (region-pseudobulk available)
+- `state_confidence` is not a calibrated posterior
+- Fixed-effect donor/batch (no random effects)

@@ -1,6 +1,6 @@
 # Roadmap
 
-## Current: v0.5.0-beta
+## Current: v1.0.0-rc.1
 
 Completed:
 - RNA+ATAC regulatory event-state inference

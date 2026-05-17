@@ -1,6 +1,8 @@
 # Output Schema
 
-MoDES v0.1.0 produces TSV files, an optional GraphML network, and an optional HTML report.
+MoDES v1.0.0-rc.1 produces TSV files, an optional GraphML network, and an optional HTML report.
+
+The `event_table.tsv` schema is **frozen** for the v1.0 release candidate.
 
 ## File Inventory
 
