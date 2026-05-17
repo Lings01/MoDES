@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from modes._types import EventCandidate
@@ -117,10 +118,19 @@ class EventCandidateBuilder:
             )
 
         # 1. Promoter and distal peaks per gene
+        # P0 opt: Build per-chromosome interval index for O(G log P) construction
+        peak_index = {}
+        for chrom, sub in peak_df.groupby("chr"):
+            sub = sub.sort_values("start").reset_index(drop=True)
+            peak_index[chrom] = {
+                "starts": sub["start"].to_numpy(),
+                "ends": sub["end"].to_numpy(),
+                "df": sub,
+            }
+
         for gene in gene_names:
             tss_info = self._tss_map.get(gene)
             if tss_info is None:
-                # Try to look up by the gene name portion only
                 for key, val in self._tss_map.items():
                     if val[0] == gene or key == gene.split(":")[0].split("_")[0]:
                         tss_info = val
@@ -129,11 +139,18 @@ class EventCandidateBuilder:
                 continue
             _, tss_chr, tss_pos = tss_info
 
-            gene_peaks = peak_df[peak_df["chr"] == tss_chr]
-            if gene_peaks.empty:
+            pi = peak_index.get(tss_chr)
+            if pi is None:
                 continue
 
-            for _, peak in gene_peaks.iterrows():
+            # Binary search for peaks within TSS ± distal_window
+            left = tss_pos - self.distal_window
+            right = tss_pos + self.distal_window
+            lo = np.searchsorted(pi["starts"], left, side="left")
+            hi = np.searchsorted(pi["starts"], right, side="right")
+            candidate_peaks = pi["df"].iloc[lo:hi]
+
+            for _, peak in candidate_peaks.iterrows():
                 distance = _peak_tss_distance(
                     peak["start"], peak["end"], tss_pos
                 )
