@@ -4,7 +4,7 @@
 def test_import_modes():
     import modes
     assert modes is not None
-    assert modes.__version__ == "0.1.0"
+    assert modes.__version__ == "1.0.0-rc.1"
 
 
 def test_public_api_imports():

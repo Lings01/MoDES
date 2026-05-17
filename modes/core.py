@@ -18,12 +18,13 @@ from modes.states import EvidenceBuilder, StateClassifier
 def _event_result_columns():
     return [
         "event_id", "tf_name", "peak_id", "gene", "context",
-        "state", "state_confidence", "artifact_risk", "artifact_reason",
-        "event_pval", "event_fdr", "quality_score",
+        "state", "state_confidence", "quality_score",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
+        "artifact_risk", "artifact_reason",
+        "event_pval", "event_fdr",
     ]
 
 
@@ -273,6 +274,17 @@ class MoDES:
                 params=params,
             )
 
+        # --- Pass 0: Pre-build O(1) lookup maps (P0 opt: was O(E²) per-event filter) ---
+        cond_map = {}
+        for _, cr in self.conditional_effects.iterrows():
+            cond_map[cr["event_id"]] = cr
+        state_map = {}
+        for _, sr in self.states.iterrows():
+            state_map[sr["event_id"]] = sr
+        ev_map = {}
+        for _, er in self.evidence.iterrows():
+            ev_map[er["event_id"]] = er
+
         # --- Pass 1: collect per-event data and compute event_pval ---
         raw_data = []
         from modes.utils import benjamini_hochberg
@@ -285,38 +297,35 @@ class MoDES:
             atac = self.atac_effects.get(peak)
             rna = self.rna_effects.get(gene)
 
-            # Conditional effect
-            cond_row = self.conditional_effects[
-                self.conditional_effects["event_id"] == eid
-            ]
-            if len(cond_row) == 0:
+            # Conditional effect (O(1) dict lookup)
+            cr = cond_map.get(eid)
+            if cr is None:
                 rna_after_coef = np.nan
                 rna_after_se = np.nan
                 rna_after_pval = 1.0
                 rna_after_fdr = 1.0
             else:
-                cr = cond_row.iloc[0]
                 rna_after_coef = cr.get("rna_after_atac_coef", np.nan)
                 rna_after_se = cr.get("rna_after_atac_se", np.nan)
                 rna_after_pval = cr.get("rna_after_atac_pval", 1.0)
                 rna_after_fdr = cr.get("rna_after_atac_fdr", 1.0)
 
-            # State
-            state_row = self.states[self.states["event_id"] == eid]
-            if len(state_row) == 0:
+            # State (O(1) dict lookup)
+            sr = state_map.get(eid)
+            if sr is None:
                 state = "null"
                 confidence = 1.0
                 artifact_risk = "low"
                 artifact_reason = ""
             else:
-                state = state_row.iloc[0]["state"]
-                confidence = state_row.iloc[0]["state_confidence"]
-                artifact_risk = state_row.iloc[0].get("artifact_risk", "low")
-                artifact_reason = state_row.iloc[0].get("artifact_reason", "")
+                state = sr["state"]
+                confidence = sr["state_confidence"]
+                artifact_risk = sr.get("artifact_risk", "low")
+                artifact_reason = sr.get("artifact_reason", "")
 
-            # Quality
-            ev_row = self.evidence[self.evidence["event_id"] == eid]
-            quality = ev_row.iloc[0]["quality_score"] if len(ev_row) > 0 else 0.5
+            # Quality (O(1) dict lookup)
+            er = ev_map.get(eid)
+            quality = er["quality_score"] if er is not None else 0.5
 
             # Event-level p-value based on state
             atac_pval = atac.p_value if atac else 1.0

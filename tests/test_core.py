@@ -260,12 +260,13 @@ def test_event_table_schema_exact(synthetic_bulk_data_small):
 
     expected = [
         "event_id", "tf_name", "peak_id", "gene", "context",
-        "state", "state_confidence", "artifact_risk", "artifact_reason",
-        "event_pval", "event_fdr", "quality_score",
+        "state", "state_confidence", "quality_score",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
+        "artifact_risk", "artifact_reason",
+        "event_pval", "event_fdr",
     ]
     assert list(result.event_table.columns) == expected
 

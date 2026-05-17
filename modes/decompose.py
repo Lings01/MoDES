@@ -73,6 +73,8 @@ class ConditionalDecomposition:
         """
         records = []
         rna_ls, _ = data.get_library_sizes()
+        # Pre-build event-to-gene map (used for attenuation, cis_score, etc.)
+        event_to_gene = dict(zip(events["event_id"], events["gene"]))
 
         if self.conditional_mode == "cis_score":
             # Pre-compute per-gene cis_ATAC_score from all linked peaks
@@ -87,7 +89,6 @@ class ConditionalDecomposition:
                     weight = 1.0 / (dist + 1)
                     gene_to_peaks[g].append((p, weight))
 
-            # Build cis_score per sample
             cis_scores = {}
             for gene, peak_weights in gene_to_peaks.items():
                 total_weight = sum(w for _, w in peak_weights)
@@ -98,16 +99,24 @@ class ConditionalDecomposition:
                     score += w * data.atac[peak].values / total_weight
                 cis_scores[gene] = score
 
-            for _, event in events.iterrows():
-                gene = event["gene"]
+            # P0 opt: fit once per gene, cache results
+            gene_fits = {}
+            unique_genes = set(events["gene"])
+            for gene in unique_genes:
                 if gene not in data.rna.columns or gene not in cis_scores:
-                    records.append(self._null_record(event["event_id"]))
                     continue
-                result = self._fit_conditional_cis(
+                gene_fits[gene] = self._fit_conditional_cis(
                     data=data, gene=gene, cis_score=cis_scores[gene],
                     rna_offset=rna_ls,
                     rna_marginal_effect=rna_effects.get(gene),
                 )
+
+            for _, event in events.iterrows():
+                gene = event["gene"]
+                if gene not in gene_fits:
+                    records.append(self._null_record(event["event_id"]))
+                    continue
+                result = gene_fits[gene].copy()
                 result["event_id"] = event["event_id"]
                 result["cis_atac_score_method"] = "distance_weighted"
                 records.append(result)
@@ -138,20 +147,11 @@ class ConditionalDecomposition:
             fdrs = benjamini_hochberg(pvals)
             df["rna_after_atac_fdr"] = fdrs
 
-        # Compute attenuation
-        # attenuation = beta_conditional / beta_marginal
-        # If near 0 -> ATAC explains most RNA effect
-        # If near 1 -> ATAC doesn't explain RNA effect
+        # P0 opt: O(E) attenuation using event_to_gene map (was O(E²))
         attenuations = []
         for _, row in df.iterrows():
-            rid = row["event_id"]
-            for _, ev in events.iterrows():
-                if ev["event_id"] == rid:
-                    rna_eff = rna_effects.get(ev["gene"])
-                    break
-            else:
-                rna_eff = None
-
+            gene = event_to_gene.get(row["event_id"])
+            rna_eff = rna_effects.get(gene) if gene else None
             if rna_eff is not None and abs(rna_eff.coef) > 1e-6:
                 att = row["rna_after_atac_coef"] / rna_eff.coef
             else:

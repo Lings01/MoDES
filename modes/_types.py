@@ -81,11 +81,15 @@ class EventState:
 class EventResult:
     """Combined result for a single event -- the main output row."""
 
+    # Required fields (no defaults)
     event_id: str
     tf_name: str | None
     peak_id: str
     gene: str
     context: str
+    state: str
+    state_confidence: float
+    quality_score: float
     atac_coef: float
     atac_se: float
     atac_pval: float
@@ -100,9 +104,7 @@ class EventResult:
     rna_after_atac_se: float
     rna_after_atac_pval: float
     rna_after_atac_fdr: float
-    state: str
-    state_confidence: float
-    quality_score: float
+    # Optional fields (with defaults)
     artifact_risk: str = "low"
     artifact_reason: str = ""
     event_pval: float = 1.0

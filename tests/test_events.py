@@ -60,8 +60,11 @@ class TestEventCandidateBuilder:
             external_links=external,
         )
 
-        # Should include the external link
-        assert any("external" in eid for eid in events["event_id"])
+        # Should include the external link (event_id is now hash-based)
+        assert any(
+            row["peak_id"] == "chr1:2000-3000" and row["gene"] == "geneX:chr1:1000"
+            for _, row in events.iterrows()
+        )
 
     def test_build_with_motif_annotation(self):
         """Test assigning TF motifs to peaks."""

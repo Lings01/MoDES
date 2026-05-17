@@ -76,6 +76,19 @@ class EffectEstimator:
             if peak not in data.atac.columns:
                 continue
             y = data.atac[peak].values.astype(float)
+            # P0 opt: skip low-information features
+            if _skip_feature(y):
+                effects[peak] = ModalityEffect(
+                    coef=0.0, se=1e6, z_score=0.0, p_value=1.0,
+                    convergence=False,
+                    model_summary={
+                        "model_used": "skipped_low_count",
+                        "warning": "Below detection threshold",
+                        "converged": False,
+                        "dropped_covariates": False,
+                    },
+                )
+                continue
             effect = self._fit_nb_glm(
                 y, X_base, offset=atac_ls, feature_name=peak
             )
@@ -119,6 +132,18 @@ class EffectEstimator:
             if gene not in data.rna.columns:
                 continue
             y = data.rna[gene].values.astype(float)
+            if _skip_feature(y):
+                effects[gene] = ModalityEffect(
+                    coef=0.0, se=1e6, z_score=0.0, p_value=1.0,
+                    convergence=False,
+                    model_summary={
+                        "model_used": "skipped_low_count",
+                        "warning": "Below detection threshold",
+                        "converged": False,
+                        "dropped_covariates": False,
+                    },
+                )
+                continue
             effect = self._fit_nb_glm(
                 y, X_base, offset=rna_ls, feature_name=gene
             )
@@ -355,6 +380,11 @@ class EffectEstimator:
     def _n_params(self, data) -> int:
         """Number of parameters in the design matrix."""
         return self._build_design_matrix(data).shape[1]
+
+
+def _skip_feature(y: np.ndarray, min_nonzero: int = 3, min_total: float = 10.0) -> bool:
+    """Return True if feature has too few nonzero samples or too low total count."""
+    return (y > 0).sum() < min_nonzero or y.sum() < min_total
 
 
 def _safe_fit_nb_glm(
