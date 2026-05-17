@@ -104,14 +104,16 @@ class MoDES:
         self.min_total_count = min_total_count
         self.batch_col_quality = batch_col_quality
 
-        # Pipeline state
+        # Pipeline state — v2.0: generic multi-modality
         self.events: pd.DataFrame | None = None
-        self.atac_effects: dict | None = None
-        self.rna_effects: dict | None = None
+        self.effects: dict[str, dict] = {}     # modality_name → {feature_id → ModalityEffect}
+        self.atac_effects: dict | None = None   # backward compat alias
+        self.rna_effects: dict | None = None    # backward compat alias
         self.conditional_effects: pd.DataFrame | None = None
         self.evidence: pd.DataFrame | None = None
         self.states: pd.DataFrame | None = None
         self.results: MoDESResult | None = None
+        self.modality_evidence: pd.DataFrame | None = None  # v2.0 long-format
 
     def run(self) -> MoDESResult:
         """Execute the full MoDES pipeline."""
@@ -121,6 +123,7 @@ class MoDES:
         self.build_evidence()
         self.classify_states()
         self.results = self._assemble_results()
+        self._build_modality_evidence()  # v2.0: long-format multi-modal evidence
         return self.results
 
     def build_events(
@@ -196,6 +199,9 @@ class MoDES:
         self.atac_effects, self.rna_effects = estimator.estimate_effects(
             self.data, peak_names, gene_names
         )
+        # v2.0: populate generic effects dict
+        self.effects["atac"] = self.atac_effects
+        self.effects["rna"] = self.rna_effects
         return self.atac_effects, self.rna_effects
 
     def decompose(self) -> pd.DataFrame:
@@ -455,6 +461,7 @@ class MoDES:
             layer_effects=self._build_layer_effects_df(),
             evidence_vectors=self.evidence.copy() if self.evidence is not None else None,
             model_diagnostics=model_diag,
+            modality_evidence=self.modality_evidence.copy() if self.modality_evidence is not None else None,
             params=params,
         )
 
@@ -483,6 +490,68 @@ class MoDES:
                 "rna_fdr": rna.fdr if rna else 1.0,
             })
         return pd.DataFrame(records)
+
+    def _build_modality_evidence(self) -> pd.DataFrame:
+        """v2.0: Build long-format event × modality evidence table."""
+        rows = []
+        for _, event in self.events.iterrows():
+            eid = event["event_id"]
+            gene = event["gene"]
+            peak = event["peak_id"]
+
+            # RNA evidence
+            rna_eff = self.rna_effects.get(gene)
+            if rna_eff:
+                rows.append({
+                    "event_id": eid, "modality": "rna", "assay": "RNA",
+                    "target": None, "feature_id": gene, "role": "transcript_output",
+                    "coef": rna_eff.coef, "se": rna_eff.se,
+                    "pval": rna_eff.p_value, "fdr": rna_eff.fdr,
+                    "direction": rna_eff.direction,
+                    "quality_score": float(rna_eff.model_summary.get("quality_score", 0.5)) if isinstance(rna_eff.model_summary, dict) else 0.5,
+                    "model_used": rna_eff.model_summary.get("model_used", "unknown") if isinstance(rna_eff.model_summary, dict) else "unknown",
+                    "converged": rna_eff.convergence,
+                })
+
+            # ATAC evidence
+            atac_eff = self.atac_effects.get(peak)
+            if atac_eff:
+                rows.append({
+                    "event_id": eid, "modality": "atac", "assay": "ATAC",
+                    "target": None, "feature_id": peak, "role": "chromatin_accessibility",
+                    "coef": atac_eff.coef, "se": atac_eff.se,
+                    "pval": atac_eff.p_value, "fdr": atac_eff.fdr,
+                    "direction": atac_eff.direction,
+                    "quality_score": float(atac_eff.model_summary.get("quality_score", 0.5)) if isinstance(atac_eff.model_summary, dict) else 0.5,
+                    "model_used": atac_eff.model_summary.get("model_used", "unknown") if isinstance(atac_eff.model_summary, dict) else "unknown",
+                    "converged": atac_eff.convergence,
+                })
+
+            # Additional modalities from data.modalities
+            for mod_name in self.data.modalities:
+                if mod_name in ("rna", "atac"):
+                    continue
+                spec = self.data.modality_specs.get(mod_name)
+                eff_dict = self.effects.get(mod_name, {})
+                feature = gene if spec and spec.feature_type == "gene" else peak
+                mod_eff = eff_dict.get(feature)
+                if mod_eff:
+                    rows.append({
+                        "event_id": eid, "modality": mod_name,
+                        "assay": spec.assay if spec else "unknown",
+                        "target": spec.target if spec else None,
+                        "feature_id": feature,
+                        "role": spec.regulatory_role if spec else "unknown",
+                        "coef": mod_eff.coef, "se": mod_eff.se,
+                        "pval": mod_eff.p_value, "fdr": mod_eff.fdr,
+                        "direction": mod_eff.direction,
+                        "quality_score": 0.5,
+                        "model_used": mod_eff.model_summary.get("model_used", "unknown") if isinstance(mod_eff.model_summary, dict) else "unknown",
+                        "converged": mod_eff.convergence,
+                    })
+
+        self.modality_evidence = pd.DataFrame(rows) if rows else pd.DataFrame()
+        return self.modality_evidence
 
     def _build_model_diagnostics(self) -> pd.DataFrame:
         """Collect model diagnostics from all effect estimates."""
@@ -541,6 +610,7 @@ class MoDESResult:
         layer_effects: pd.DataFrame | None = None,
         evidence_vectors: pd.DataFrame | None = None,
         model_diagnostics: pd.DataFrame | None = None,
+        modality_evidence: pd.DataFrame | None = None,
         params: dict | None = None,
     ):
         self.event_table = event_table
@@ -548,6 +618,7 @@ class MoDESResult:
         self.layer_effects = layer_effects
         self.evidence_vectors = evidence_vectors
         self.model_diagnostics = model_diagnostics
+        self.modality_evidence = modality_evidence
         self.params = params or {}
 
     def summary(self) -> str:
@@ -691,6 +762,7 @@ class MoDESResult:
         le = _read_optional_tsv(output_dir, "event_layer_effects.tsv")
         ev = _read_optional_tsv(output_dir, "event_evidence_vectors.tsv")
         md = _read_optional_tsv(output_dir, "model_diagnostics.tsv")
+        me = _read_optional_tsv(output_dir, "event_modality_evidence.tsv")
         import json
         params = {}
         rp_json = os.path.join(output_dir, "run_params.json")
@@ -702,7 +774,8 @@ class MoDESResult:
             params = dict(zip(rp["parameter"], rp["value"]))
         return cls(
             event_table=et, state_probabilities=sp, layer_effects=le,
-            evidence_vectors=ev, model_diagnostics=md, params=params,
+            evidence_vectors=ev, model_diagnostics=md,
+            modality_evidence=me, params=params,
         )
 
     def to_tsv(self, output_dir: str) -> None:
@@ -729,6 +802,13 @@ class MoDESResult:
         if self.evidence_vectors is not None:
             self.evidence_vectors.to_csv(
                 os.path.join(output_dir, "event_evidence_vectors.tsv"),
+                sep="\t", index=False,
+            )
+
+        # v2.0: long-format modality evidence
+        if hasattr(self, "modality_evidence") and self.modality_evidence is not None and len(self.modality_evidence) > 0:
+            self.modality_evidence.to_csv(
+                os.path.join(output_dir, "event_modality_evidence.tsv"),
                 sep="\t", index=False,
             )
 
