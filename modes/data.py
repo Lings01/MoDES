@@ -563,6 +563,51 @@ class MoDEData:
 
         return cls(rna=rna, atac=atac, obs=obs, modalities=mods, modality_specs=specs)
 
+    @classmethod
+    def from_protein_matrices(
+        cls,
+        rna_counts,
+        atac_counts,
+        protein_counts,
+        protein_gene_links,
+        metadata,
+        condition_col: str,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
+    ) -> "MoDEData":
+        """
+        Load RNA + ATAC + Protein multi-modal data (MoDES-RAP).
+
+        Parameters
+        ----------
+        protein_counts : str or DataFrame
+            Protein/ADT count matrix (samples × protein_ids).
+        protein_gene_links : str or DataFrame
+            Columns: protein_id, gene.
+        """
+        from modes.modalities.base import ModalitySpec
+
+        rna = _load_matrix(rna_counts) if isinstance(rna_counts, str) else rna_counts.copy()
+        atac = _load_matrix(atac_counts) if isinstance(atac_counts, str) else atac_counts.copy()
+        prot = _load_matrix(protein_counts) if isinstance(protein_counts, str) else protein_counts.copy()
+        links = _load_matrix(protein_gene_links) if isinstance(protein_gene_links, str) else protein_gene_links.copy()
+        obs = _load_matrix(metadata, index_col=0) if isinstance(metadata, str) else metadata.copy()
+
+        common = rna.index.intersection(atac.index).intersection(prot.index).intersection(obs.index)
+        if len(common) == 0:
+            raise ValueError("No common samples across input matrices")
+        rna, atac, prot, obs = rna.loc[common], atac.loc[common], prot.loc[common], obs.loc[common]
+
+        prot_spec = ModalitySpec(
+            name="protein", assay="PROTEIN", feature_type="protein",
+            regulatory_role="protein_output", priority=30,
+        )
+        from modes.modalities.base import RNA_SPEC, ATAC_SPEC
+        specs = {"rna": RNA_SPEC, "atac": ATAC_SPEC, "protein": prot_spec}
+        mods = {"rna": rna, "atac": atac, "protein": prot}
+
+        return cls(rna=rna, atac=atac, obs=obs, modalities=mods, modality_specs=specs)
+
     # -- Methods --
 
     def validate(self, condition_col: str = None) -> list[str]:
