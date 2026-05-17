@@ -269,6 +269,7 @@ class MoDES:
         classifier = StateClassifier(
             fdr_threshold=self.fdr_threshold,
             use_empirical_bayes=True,
+            modality_specs=self.data.modality_specs,
         )
 
         self.states = classifier.classify(self.evidence)

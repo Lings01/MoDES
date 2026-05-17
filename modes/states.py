@@ -141,6 +141,7 @@ class StateClassifier:
         Apply EB refinement. Default True.
     """
 
+    # v2.0: Core RNA+ATAC states (always available)
     BIOLOGICAL_STATES = {
         "null",
         "concordant",
@@ -149,7 +150,32 @@ class StateClassifier:
         "discordant_opposite",
     }
 
+    # v2.0: Extended states for multi-modal
+    EPIGENOMIC_STATES = {
+        "epigenomic_concordant", "active_enhancer_primed", "mark_only",
+        "repressive_concordant", "derepression", "repressive_primed",
+    }
+    PROTEIN_STATES = {
+        "full_activation", "protein_buffered", "protein_memory", "protein_opposite",
+    }
+    SPATIAL_STATES = {
+        "spatial_region_specific", "spatial_niche_driven",
+        "cell_intrinsic", "spatial_edge_artifact",
+    }
+
     ARTIFACT_RISK_LEVELS = ["low", "medium", "high"]
+
+    @classmethod
+    def get_applicable_states(cls, modality_specs: dict | None = None) -> set:
+        """Return all applicable biological states for the given modalities."""
+        states = set(cls.BIOLOGICAL_STATES)
+        if modality_specs:
+            for spec in modality_specs.values():
+                if hasattr(spec, 'is_epigenomic') and spec.is_epigenomic():
+                    states |= cls.EPIGENOMIC_STATES
+                if spec.assay == "PROTEIN":
+                    states |= cls.PROTEIN_STATES
+        return states
 
     def __init__(
         self,
@@ -157,11 +183,13 @@ class StateClassifier:
         z_threshold: float = 1.0,
         quality_threshold: float = 0.3,
         use_empirical_bayes: bool = True,
+        modality_specs: dict | None = None,
     ):
         self.fdr_threshold = fdr_threshold
         self.z_threshold = z_threshold
         self.quality_threshold = quality_threshold
         self.use_empirical_bayes = use_empirical_bayes
+        self.modality_specs = modality_specs or {}
 
     def classify(self, evidence: pd.DataFrame) -> pd.DataFrame:
         """Classify events into biological states with artifact risk."""
@@ -178,9 +206,10 @@ class StateClassifier:
         if self.use_empirical_bayes:
             states = self._empirical_bayes_classify(evidence, states)
 
-        # Validate: no artifact_like as primary state
+        # Validate: all states must be in the applicable set
+        valid_states = self.get_applicable_states(self.modality_specs)
         for s in states["state"]:
-            if s not in self.BIOLOGICAL_STATES:
+            if s not in valid_states:
                 raise ValueError(f"Invalid biological state returned: {s}")
 
         return states
