@@ -14,11 +14,13 @@ class EvidenceBuilder:
     """
     Construct evidence vectors D_e from effect estimates.
 
-    D_e = [z_ATAC, z_RNA, z_RNA|ATAC, quality_score]
+    D_e = [z_ATAC, z_RNA, z_RNA|ATAC, quality_score, ...extra modalities]
     """
 
-    def __init__(self, batch_col: str | None = None):
+    def __init__(self, batch_col: str | None = None,
+                 extra_modality_effects: dict[str, dict] | None = None):
         self.batch_col = batch_col
+        self.extra_effects = extra_modality_effects or {}
 
     def build(
         self,
@@ -29,6 +31,12 @@ class EvidenceBuilder:
         data,
     ) -> pd.DataFrame:
         records = []
+        # Build base + extra modality column names
+        extra_cols = []
+        for mod_name in self.extra_effects:
+            for suffix in ["_z", "_fdr", "_pval", "_direction"]:
+                extra_cols.append(f"{mod_name}{suffix}")
+
         if "event_id" not in conditional_effects.columns:
             return pd.DataFrame(columns=[
                 "event_id", "context", "z_atac", "z_rna",
@@ -36,7 +44,7 @@ class EvidenceBuilder:
                 "atac_fdr", "rna_fdr", "atac_direction",
                 "rna_direction", "atac_pval", "rna_pval",
                 "rna_after_atac_pval",
-            ])
+            ] + extra_cols)
 
         cond_map = dict(zip(
             conditional_effects["event_id"].values,
@@ -100,7 +108,7 @@ class EvidenceBuilder:
                 quality_score=quality,
             )
 
-            records.append({
+            record = {
                 "event_id": eid,
                 "context": evidence.context,
                 "z_atac": evidence.z_atac,
@@ -114,7 +122,30 @@ class EvidenceBuilder:
                 "atac_pval": atac_eff.p_value,
                 "rna_pval": rna_eff.p_value,
                 "rna_after_atac_pval": rna_after.p_value,
-            })
+            }
+            # v2.0: add extra modality evidence columns
+            for mod_name, eff_dict in self.extra_effects.items():
+                spec = data.modality_specs.get(mod_name)
+                feature = peak if (spec and spec.feature_type == "region") else gene
+                mod_eff = eff_dict.get(feature)
+                # Try fuzzy match: strip |suffix from feature keys (CUT&Tag naming)
+                if mod_eff is None:
+                    for k, v in eff_dict.items():
+                        base = k.split("|")[0] if "|" in str(k) else str(k)
+                        if base == str(feature).split("|")[0]:
+                            mod_eff = v
+                            break
+                if mod_eff and np.isfinite(mod_eff.coef):
+                    record[f"{mod_name}_z"] = mod_eff.z_score
+                    record[f"{mod_name}_fdr"] = mod_eff.fdr
+                    record[f"{mod_name}_pval"] = mod_eff.p_value
+                    record[f"{mod_name}_direction"] = mod_eff.direction
+                else:
+                    record[f"{mod_name}_z"] = 0.0
+                    record[f"{mod_name}_fdr"] = 1.0
+                    record[f"{mod_name}_pval"] = 1.0
+                    record[f"{mod_name}_direction"] = 0
+            records.append(record)
 
         return pd.DataFrame(records)
 
@@ -215,25 +246,59 @@ class StateClassifier:
         return states
 
     def _rule_based_classify(self, evidence: pd.DataFrame) -> pd.DataFrame:
-        """First-pass rule-based classification with artifact risk."""
+        """First-pass rule-based classification with artifact risk (v2.0 multi-modal)."""
         results = []
+
+        # Detect available extra modalities from evidence columns
+        extra_mods = [c.replace("_z", "") for c in evidence.columns
+                      if c.endswith("_z") and c not in ("z_atac", "z_rna", "z_rna_given_atac")]
 
         for _, row in evidence.iterrows():
             atac_sig = row["atac_fdr"] < self.fdr_threshold
             rna_sig = row["rna_fdr"] < self.fdr_threshold
-            same_dir = row["atac_direction"] == row["rna_direction"]
+            same_dir = row.get("atac_direction", 0) == row.get("rna_direction", 0)
 
-            # Determine biological state only (NO artifact_like as state)
-            if atac_sig and rna_sig and same_dir:
-                state = "concordant"
-            elif atac_sig and rna_sig and not same_dir:
-                state = "discordant_opposite"
-            elif atac_sig and not rna_sig:
-                state = "chromatin_primed"
-            elif not atac_sig and rna_sig:
-                state = "rna_only"
-            else:
-                state = "null"
+            # v2.0: Check epigenomic activating marks (H3K27ac, H3K4me3, etc.)
+            state = None  # defer; epigenomic states take priority
+            for mod_name in extra_mods:
+                epi_sig = row.get(f"{mod_name}_fdr", 1.0) < self.fdr_threshold
+                epi_dir = row.get(f"{mod_name}_direction", 0)
+                if not epi_sig:
+                    continue
+
+                # Determine if activating or repressive from modality_specs
+                spec = self.modality_specs.get(mod_name)
+                is_activating = spec and getattr(spec, 'expected_rna_direction', None) == 1
+                is_repressive = spec and getattr(spec, 'expected_rna_direction', None) == -1
+
+                if is_activating:
+                    rna_same = epi_dir == row.get("rna_direction", 0) if rna_sig else False
+                    if epi_sig and rna_sig and rna_same:
+                        state = "epigenomic_concordant"
+                    elif epi_sig and not rna_sig:
+                        state = "active_enhancer_primed"
+                    break
+                elif is_repressive:
+                    if epi_sig and rna_sig and epi_dir != row.get("rna_direction", 0):
+                        state = "repressive_concordant"
+                    elif epi_sig and rna_sig and epi_dir == row.get("rna_direction", 0):
+                        state = "derepression"
+                    elif epi_sig and not rna_sig:
+                        state = "repressive_primed"
+                    break
+
+            # Fall back to RNA+ATAC rules if no epigenomic state was assigned
+            if state is None:
+                if atac_sig and rna_sig and same_dir:
+                    state = "concordant"
+                elif atac_sig and rna_sig and not same_dir:
+                    state = "discordant_opposite"
+                elif atac_sig and not rna_sig:
+                    state = "chromatin_primed"
+                elif not atac_sig and rna_sig:
+                    state = "rna_only"
+                else:
+                    state = "null"
 
             # Compute artifact risk separately
             artifact_risk, artifact_reason = self._compute_artifact_risk(row)

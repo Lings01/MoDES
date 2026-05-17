@@ -250,8 +250,12 @@ class MoDES:
         if self.conditional_effects is None:
             raise RuntimeError("Call decompose() first")
 
+        # v2.0: collect extra modality effects for evidence building
+        extra_effects = {k: v for k, v in self.effects.items()
+                        if k not in ("rna", "atac")}
         builder = EvidenceBuilder(
-            batch_col=self.batch_col_quality or self.batch_col
+            batch_col=self.batch_col_quality or self.batch_col,
+            extra_modality_effects=extra_effects if extra_effects else None,
         )
         self.evidence = builder.build(
             events=self.events,
