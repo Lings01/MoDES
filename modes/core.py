@@ -542,8 +542,9 @@ class MoDES:
         )
 
     def _build_layer_effects_df(self) -> pd.DataFrame:
-        """Assemble per-event layer effect estimates."""
+        """Assemble per-event layer effect estimates (v2.0: multi-modal)."""
         records = []
+        extra_mod_names = [m for m in self.effects if m not in ("rna", "atac")]
         for _, event in self.events.iterrows():
             eid = event["event_id"]
             peak = event["peak_id"]
@@ -552,7 +553,7 @@ class MoDES:
             atac = self.atac_effects.get(peak)
             rna = self.rna_effects.get(gene)
 
-            records.append({
+            rec = {
                 "event_id": eid,
                 "peak_id": peak,
                 "gene": gene,
@@ -564,7 +565,36 @@ class MoDES:
                 "rna_se": rna.se if rna else np.nan,
                 "rna_z": rna.z_score if rna else np.nan,
                 "rna_fdr": rna.fdr if rna else 1.0,
-            })
+            }
+            # v2.0: append extra modality effects
+            for mod_name in extra_mod_names:
+                eff_dict = self.effects.get(mod_name, {})
+                spec = self.data.modality_specs.get(mod_name)
+                # Resolve feature
+                if spec and spec.assay == "PROTEIN":
+                    links = getattr(self.data, 'protein_gene_links', None)
+                    feat_key = None
+                    if links is not None:
+                        for _, lr in links.iterrows():
+                            if str(lr["gene"]) == gene or str(lr["gene"]) == gene.split(":")[0]:
+                                feat_key = str(lr["protein_id"])
+                                break
+                    if feat_key is None:
+                        feat_key = gene
+                elif spec and spec.feature_type == "region":
+                    feat_key = peak
+                else:
+                    feat_key = gene
+                mod_eff = eff_dict.get(feat_key)
+                if mod_eff is None:
+                    for k, v in eff_dict.items():
+                        if str(k).split("|")[0] == str(feat_key).split("|")[0]:
+                            mod_eff = v
+                            break
+                rec[f"{mod_name}_coef"] = mod_eff.coef if mod_eff else np.nan
+                rec[f"{mod_name}_z"] = mod_eff.z_score if mod_eff else np.nan
+                rec[f"{mod_name}_fdr"] = mod_eff.fdr if mod_eff else 1.0
+            records.append(rec)
         return pd.DataFrame(records)
 
     def _build_modality_evidence(self) -> pd.DataFrame:
