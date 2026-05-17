@@ -30,20 +30,43 @@ class MoDEData:
         rna: pd.DataFrame,
         atac: pd.DataFrame,
         obs: pd.DataFrame,
+        modalities: dict[str, pd.DataFrame] | None = None,
+        modality_specs: dict | None = None,
     ):
         if not (rna.index.equals(atac.index) and rna.index.equals(obs.index)):
             raise ValueError(
                 "RNA, ATAC, and obs must have matching sample indices"
             )
-        self.rna = rna.astype(float)
-        self.atac = atac.astype(float)
+        self._rna = rna.astype(float)
+        self._atac = atac.astype(float)
         self.obs = obs.copy()
+        # v2.0: generic multi-modality support
+        self.modalities = modalities or {"rna": self._rna, "atac": self._atac}
+        self.modality_specs = modality_specs or {}
 
     # -- Properties --
 
     @property
     def n_samples(self) -> int:
-        return self.rna.shape[0]
+        return self._rna.shape[0]
+
+    @property
+    def rna(self):
+        return self._rna
+
+    @rna.setter
+    def rna(self, value):
+        self._rna = value.astype(float)
+        self.modalities["rna"] = self._rna
+
+    @property
+    def atac(self):
+        return self._atac
+
+    @atac.setter
+    def atac(self, value):
+        self._atac = value.astype(float)
+        self.modalities["atac"] = self._atac
 
     @property
     def n_genes(self) -> int:
@@ -464,6 +487,81 @@ class MoDEData:
             rna_df = pd.DataFrame(rna_mat, index=obs.index, columns=rna_names)
             atac_df = pd.DataFrame(atac_mat, index=obs.index, columns=atac_names)
             return cls(rna=rna_df, atac=atac_df, obs=obs)
+
+    @classmethod
+    def from_epigenomic_matrices(
+        cls,
+        rna_counts,
+        epigenomic_counts,
+        epigenomic_features,
+        metadata,
+        condition_col: str,
+        target: str = "H3K27ac",
+        assay: str = "CUTTAG",
+        atac_counts=None,
+        donor_col: str | None = None,
+        batch_col: str | None = None,
+    ) -> "MoDEData":
+        """
+        Load RNA + CUT&Tag/CUT&RUN/ChIP-seq multi-modal data.
+
+        Parameters
+        ----------
+        rna_counts : str or DataFrame
+            RNA count matrix (samples × genes).
+        epigenomic_counts : str or DataFrame
+            Epigenomic count matrix. Feature names encode target+region.
+        epigenomic_features : str or DataFrame
+            Feature annotation: feature_id, chr, start, end, assay, target, role.
+        metadata : str or DataFrame
+            Sample metadata with condition column.
+        condition_col : str
+        target : str
+            Epigenomic target (H3K27ac, H3K4me3, H3K27me3, CTCF, etc.).
+        assay : str
+            Assay type (CUTTAG, CUTRUN, CHIPSEQ).
+        atac_counts : str or DataFrame, optional
+            ATAC count matrix.
+        donor_col : str, optional
+        batch_col : str, optional
+        """
+        from modes.modalities.cuttag import make_cuttag_spec
+
+        rna = _load_matrix(rna_counts) if isinstance(rna_counts, str) else rna_counts.copy()
+        epi = _load_matrix(epigenomic_counts) if isinstance(epigenomic_counts, str) else epigenomic_counts.copy()
+        obs = _load_matrix(metadata, index_col=0) if isinstance(metadata, str) else metadata.copy()
+        epi_feat = _load_matrix(epigenomic_features) if isinstance(epigenomic_features, str) else epigenomic_features.copy()
+
+        # Align samples
+        common = rna.index.intersection(epi.index).intersection(obs.index)
+        if atac_counts is not None:
+            atac = _load_matrix(atac_counts) if isinstance(atac_counts, str) else atac_counts.copy()
+            common = common.intersection(atac.index)
+        if len(common) == 0:
+            raise ValueError("No common samples across input matrices and metadata")
+        rna = rna.loc[common]
+        epi = epi.loc[common]
+        obs = obs.loc[common]
+        if atac_counts is not None:
+            atac = atac.loc[common]
+        else:
+            atac = pd.DataFrame(0, index=common, columns=["dummy_atac"])
+
+        # Build modality specs
+        from modes.modalities.base import RNA_SPEC
+        specs = {"rna": RNA_SPEC}
+        mods = {"rna": rna}
+
+        epi_name = f"{target.lower()}_{assay.lower()}"
+        specs[epi_name] = make_cuttag_spec(epi_name, target, assay)
+        mods[epi_name] = epi
+
+        if atac_counts is not None:
+            from modes.modalities.base import ATAC_SPEC
+            specs["atac"] = ATAC_SPEC
+            mods["atac"] = atac
+
+        return cls(rna=rna, atac=atac, obs=obs, modalities=mods, modality_specs=specs)
 
     # -- Methods --
 
