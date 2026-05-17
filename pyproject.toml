@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modes-bio"
-version = "2.0.0-dev"
+version = "2.0.0"
 description = "Multi-omics discordance-guided regulatory event state inference"
 readme = "README.md"
 requires-python = ">=3.10"
