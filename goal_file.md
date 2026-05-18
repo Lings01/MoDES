@@ -1,313 +1,274 @@
-Lings，这份三审意见虽然很狠，但它已经把核心问题说透了：
+Lings，这次从 Reject 变成 Major Revision 是一个关键信号：审稿人已经承认 MoDES 不是“空壳多模态”了。现在主要矛盾不是“你有没有写代码”，而是：
 
-MoDES 现在看起来像 multi-modal software interface，但还不像 multi-modal statistical inference engine。
+你已经把多模态接进了软件架构，但还没有把多模态接进统计解释、证据评分、验证体系和文档叙事。
 
-也就是说，审稿人已经承认你做了不少东西：extra modalities 进了 effect、evidence、state 流程；版本也统一了；event_fdr 也降级成 heuristic。
-但他们现在抓的是更深的一层：
+我刚看了当前仓库 README，它确实已经把 MoDES 写成 v2.0 的 multi-modal regulatory event-state inference，并把 CUT&Tag、Protein、Spatial、MuData 等标为 experimental；同时 README 仍有一些较强的生物学解释，比如 “complete regulatory chain activation” 和 “chromatin opening drives transcriptional activation” 这类语言，容易被审稿人抓住。 ￼
 
-多模态只是加进规则系统；
-统计证据没有真正多模态化；
-event_pval / event_fdr 仍然 RNA+ATAC-centric；
-conditional decomposition 仍然是 RNA after ATAC；
-spatial / dynamic 还是 helper，不是主流程；
-benchmark 仍然按规则生成、按规则识别。
-
-如果你想保住 multi-omics 这个名字，下一步不能再只是“补功能”。你需要把 MoDES 从：
-
-RNA+ATAC core + extra modality rules
-
-重构成：
-
-modality-generic evidence engine + state grammar + state-specific evidence scoring + calibration
-
-下面是我建议的完整修复方案。
+下面是我建议你按 “能过大修” 的标准来做的完整方案。
 
 ⸻
 
-0. 先定战略：不要再写“inference framework”，改成“evidence framework”
+总体策略
 
-如果你继续叫：
+这轮不要再继续盲目加功能。你已经有足够多功能了。现在要做的是：
 
-validated multi-omics regulatory event inference framework
+1. 修 state grammar 的逻辑漏洞；
+2. 修 state_support_pval/qval 的统计表述；
+3. 把文档彻底更新到 v2.0；
+4. 把真实验证和 benchmark 做到能说服人；
+5. 把因果措辞全部降级成 association / annotation / prioritization。
 
-还会被拒。
+你现在最危险的不是代码不够，而是 claim 仍然比证据大。
 
-建议主标题改成：
+建议把论文定位改成：
 
-MoDES: a multi-omics evidence framework for regulatory event-state annotation
+MoDES is a multi-omics evidence-scoring and event-state annotation framework for candidate regulatory links.
 
-或者更稳：
+不要写：
 
-MoDES: multi-omics evidence scoring and state annotation for candidate regulatory events
+MoDES is a validated multi-omics regulatory inference framework.
 
-核心是把 inference 换成：
-
-evidence scoring
-state annotation
-candidate prioritization
-
-这样你还能保留 multi-omics，但不会被要求证明完整因果统计模型。
+这两个句子差别非常大。前者能过大修，后者很容易继续被拒。
 
 ⸻
 
-1. 最大硬伤：event_pval / event_fdr 与 extra modalities 脱节
+一、必须重写 state grammar
 
-这是这轮 review 最致命的一点。
+审稿人指出的第一个大问题很准确：你现在的 RNA+ATAC core states 偏 activation-centric。
 
-现在的问题是：
+如果你的 concordant 只覆盖：
 
-state 由 H3K27ac / protein / spatial 触发；
-但 event_pval 仍然主要用 ATAC/RNA p-value。
+ATAC ↑, RNA ↑
 
-这在多模态中不能接受。
+那它漏掉了：
 
-必须改成 state-specific evidence p-value
+ATAC ↓, RNA ↓
 
-每个 state 必须声明：
+而后者在很多真实数据中也很常见，比如 enhancer closing + gene downregulation。
 
-这个 state 由哪些 modality 的哪些方向支持？
+1.1 修 RNA+ATAC core state
 
-然后 event p-value 必须来自这些支持该 state 的 modality，而不是固定 ATAC/RNA。
+建议不要只用 concordant 一个名字。改成方向明确的 state：
 
-⸻
+concordant_activation:
+  ATAC ↑, RNA ↑
+concordant_repression:
+  ATAC ↓, RNA ↓
+discordant_opening_repression:
+  ATAC ↑, RNA ↓
+discordant_closing_activation:
+  ATAC ↓, RNA ↑
+chromatin_open_primed:
+  ATAC ↑, RNA not significant
+chromatin_closed_primed:
+  ATAC ↓, RNA not significant
+rna_up_only:
+  RNA ↑, ATAC not significant
+rna_down_only:
+  RNA ↓, ATAC not significant
+null:
+  neither significant
 
-1.1 新增 StateRule
+如果你想保留旧名字，也可以在输出里加一个更高层字段：
 
-新增文件：
+state_family = concordant / discordant / chromatin_primed / rna_only / null
+state = concordant_activation / concordant_repression / ...
 
-modes/modalities/state_rules.py
-
-定义：
-
-from dataclasses import dataclass
-from typing import Optional, Sequence
-@dataclass(frozen=True)
-class RequiredEvidence:
-    modality: str
-    direction: int  # +1, -1
-    role: Optional[str] = None
-    target: Optional[str] = None
-@dataclass(frozen=True)
-class NeutralEvidence:
-    modality: str
-    role: Optional[str] = None
-@dataclass(frozen=True)
-class ForbiddenEvidence:
-    modality: str
-    direction: int
-    role: Optional[str] = None
-@dataclass(frozen=True)
-class StateRule:
-    name: str
-    required: Sequence[RequiredEvidence]
-    neutral: Sequence[NeutralEvidence] = ()
-    forbidden: Sequence[ForbiddenEvidence] = ()
-    description: str = ""
-    interpretation_strength: str = "association"  # association / hypothesis / causal_not_claimed
+这样兼容旧版本，也解决审稿人的方向性批评。
 
 ⸻
 
-1.2 示例 state rules
+1.2 给 StateRule 加 direction relation
 
-RNA+ATAC
+现在每个 rule 如果都是固定 +1 或 -1，会让状态表爆炸。更优雅的是支持：
 
-CONCORDANT = StateRule(
-    name="concordant",
-    required=[
-        RequiredEvidence("atac", +1),
-        RequiredEvidence("rna", +1),
-    ],
-    description="ATAC and RNA change in the same direction.",
-)
-CHROMATIN_PRIMED = StateRule(
-    name="chromatin_primed",
-    required=[
-        RequiredEvidence("atac", +1),
-    ],
-    neutral=[
-        NeutralEvidence("rna"),
-    ],
-    description="ATAC changes while RNA does not show significant change.",
-)
-RNA_ONLY = StateRule(
-    name="rna_only",
-    required=[
-        RequiredEvidence("rna", +1),
-    ],
-    neutral=[
-        NeutralEvidence("atac"),
-    ],
-)
-
-CUT&Tag activating mark
-
-ACTIVE_MARK_CONCORDANT = StateRule(
-    name="active_mark_concordant",
-    required=[
-        RequiredEvidence("cuttag_h3k27ac", +1),
-        RequiredEvidence("rna", +1),
-    ],
-    description="Activating chromatin mark and RNA change concordantly.",
-)
-ACTIVE_MARK_PRIMED = StateRule(
-    name="active_mark_primed",
-    required=[
-        RequiredEvidence("cuttag_h3k27ac", +1),
-    ],
-    neutral=[
-        NeutralEvidence("rna"),
-    ],
-)
-
-Repressive mark
-
-DEREPRESSED = StateRule(
-    name="derepressed",
-    required=[
-        RequiredEvidence("cuttag_h3k27me3", -1),
-        RequiredEvidence("rna", +1),
-    ],
-)
-
-Protein
-
-FULL_ACTIVATION = StateRule(
-    name="full_activation",
-    required=[
-        RequiredEvidence("atac", +1),
-        RequiredEvidence("rna", +1),
-        RequiredEvidence("protein", +1),
-    ],
-)
-PROTEIN_BUFFERED = StateRule(
-    name="protein_buffered",
-    required=[
-        RequiredEvidence("rna", +1),
-    ],
-    neutral=[
-        NeutralEvidence("protein"),
-    ],
-)
-PROTEIN_MEMORY = StateRule(
-    name="protein_memory",
-    required=[
-        RequiredEvidence("protein", +1),
-    ],
-    neutral=[
-        NeutralEvidence("rna"),
-    ],
-)
-
-⸻
-
-1.3 新的 state p-value 计算
-
-每个 state 用它自己的 required modalities 计算 p-value。
-
-对 required evidence：
-
-required modality 都要显著
-
-则可以用 intersection test：
-
-state_support_pval = max(directed_pvals_of_required_modalities)
+same_direction
+opposite_direction
+any_direction
 
 例如：
 
-active_mark_primed:
-  required = H3K27ac ↑
-  state_support_pval = p_H3K27ac_up
-full_activation:
-  required = ATAC ↑, RNA ↑, protein ↑
-  state_support_pval = max(p_ATAC_up, p_RNA_up, p_protein_up)
-protein_memory:
-  required = protein ↑
-  state_support_pval = p_protein_up
-mark_only:
-  required = H3K27ac ↑
-  state_support_pval = p_H3K27ac_up
+StateRule(
+    name="concordant",
+    required_relation=[
+        DirectionRelation("atac", "rna", relation="same")
+    ],
+)
 
-这样就不会出现：
+但从工程速度考虑，我建议先用显式 state：
 
-state 由 H3K27ac 触发，但 event_pval 用 ATAC p-value
+concordant_activation
+concordant_repression
+...
 
-这个硬伤。
+更容易写测试，也更容易解释。
 
 ⸻
 
-1.4 directed p-value
+二、修 neutral / absent / forbidden / missing 的语义
 
-不要只用普通 p-value，还要看方向。
+审稿人指出 protein_buffered 和 mark_only 的逻辑太松，这是非常重要的问题。
 
-def directed_pvalue(pval: float, coef: float, expected_direction: int) -> float:
-    if expected_direction == 0:
-        return pval
-    if coef * expected_direction > 0:
-        return min(pval / 2.0, 1.0)
-    return 1.0
+现在如果一个 rule 写：
 
-注意这仍然不是严格单侧检验，但比方向和 p-value 脱节更合理。文档要说明这是 directional evidence score。
+required: RNA ↑
+neutral: protein
+
+这不等于：
+
+RNA ↑ and protein unchanged
+
+它可能只是：
+
+protein missing
+protein noisy
+protein weak
+protein significant but not used
+
+所以必须把 evidence 状态拆开。
+
+2.1 新增四类 evidence condition
+
+建议 StateRule 支持这几种条件：
+
+required_significant:
+  某模态必须显著，且方向匹配
+required_absent:
+  某模态必须不显著
+forbidden_significant:
+  某模态不能显著，或者不能以某方向显著
+optional_support:
+  有则加分，没有不扣分
+missing_allowed:
+  该模态缺失时仍可分类，但降低 assignment score
+
+例如：
+
+protein_buffered:
+  required_significant: RNA ↑
+  required_absent: protein
+
+而不是：
+
+required: RNA ↑
+neutral: protein
+
+mark_only 应该是：
+
+required_significant: active_mark ↑
+required_absent: RNA
+required_absent: ATAC
+
+active_enhancer_primed 应该是：
+
+required_significant: active_mark ↑
+optional_support: ATAC ↑
+required_absent: RNA
+
+这样 active_enhancer_primed 和 mark_only 才能区分。
 
 ⸻
 
-1.5 输出字段改名
+2.2 缺失模态不能等同于“不显著”
 
-把：
+这是多组学里非常关键的点。
 
-event_pval
-event_fdr
+protein not measured
 
-改成或新增：
+不能被解释成：
 
-state_support_pval
-state_support_qval
-supporting_modalities
+protein unchanged
 
-保留旧字段也可以，但不建议作为主解释。
+所以状态规则里必须区分：
 
-主表建议：
+not significant because measured and p >= threshold
+missing because modality absent
+
+建议 evidence 表里增加：
+
+modality_available
+measured
+significant
+missing_reason
+
+如果 protein 不存在，那么不应触发 protein_buffered 或 protein_memory。
+
+⸻
+
+三、state_support_pval / qval 要降级或重新定义
+
+审稿人现在已经从“event_fdr 完全错”退一步，承认 state_support_pval 是进步。但他们继续抓 post-selection 和 directed p-value。这个必须正面处理。
+
+3.1 不要叫 p-value / q-value，除非你证明它们有校准意义
+
+如果 directed_pvalue() 本身文档写了不是严格 one-sided test，那你不能再把它放进 BH 后叫 q-value。
+
+建议改名：
+
+state_support_score
+state_support_rank
+state_support_bh_score
+
+或者更折中：
+
+state_support_pseudo_p
+state_support_pseudo_q
+
+但最好不要出现 pval/qval 这种强统计词。
+
+我最推荐：
+
+state_support_score
+state_support_adjusted_score
+
+文档写：
+
+State support scores are ranking-oriented evidence scores. They are not formal post-selection p-values and should not be interpreted as calibrated FDR.
+
+⸻
+
+3.2 如果你坚持保留 qval，就必须做 calibration
+
+那就需要 benchmark 证明：
+
+under null:
+  selected state false discovery rate is controlled or at least empirically bounded
+
+最低限度要做：
+
+condition label permutation
+random peak-gene links
+random protein-gene links
+random CUT&Tag-region links
+sample label shuffle per modality
+
+然后报告：
+
+fraction of selected states at q < 0.05 / 0.1
+
+如果不做这个，就别叫 qval。
+
+⸻
+
+四、主输出 schema 必须拆成固定主表 + 长格式证据表
+
+审稿人说得很对：你不能一边说 event_table schema frozen，一边动态追加 {mod}_coef/{mod}_pval。
+
+4.1 固定 event_table.tsv
+
+主表只保留固定列：
 
 event_id
-state
-state_assignment_score
-state_support_pval
-state_support_qval
-supporting_modalities
-neutral_modalities
-conflicting_modalities
-artifact_risk
-artifact_reason
-
-这样 reviewer 第四条会被直接解决。
-
-⸻
-
-2. 第二硬伤：多模态 evidence 不应该塞进 dynamic columns
-
-reviewer 说得对：
-
-schema frozen
-但 extra modality 又动态加列
-
-这会被抓。
-
-必须拆成两个表
-
-2.1 固定主表：event_table.tsv
-
-只保留固定列：
-
-event_id
-region_id
+region_id / peak_id
 gene
 context
 tf_name
 link_source
 link_score
+state_family
 state
 state_assignment_score
-state_support_pval
-state_support_qval
+state_support_score
 supporting_modalities
 neutral_modalities
 conflicting_modalities
@@ -315,13 +276,20 @@ artifact_risk
 artifact_reason
 quality_score
 
-这张表永远固定。
+不要再在主表里动态追加：
+
+cuttag_h3k27ac_coef
+protein_pval
+spatial_neighbor_effect
+...
 
 ⸻
 
-2.2 长格式证据表：event_modality_evidence.tsv
+4.2 所有模态证据进入 event_modality_evidence.tsv
 
-新增输出：
+这个表应该是 v2.0 的核心。
+
+字段：
 
 event_id
 modality
@@ -334,236 +302,21 @@ se
 pval
 fdr
 direction
-directed_pval
+directed_score
 quality_score
+detection_score
+depth_score
+batch_score
 model_used
 converged
 warning
 
-例如：
-
-E001  rna              RNA     IFIT3      IFIT3       transcript_output   1.2  ...
-E001  atac             ATAC    .          chr1:...    accessibility       0.8  ...
-E001  cuttag_h3k27ac   CUTTAG  H3K27ac    chr1:...    activating_mark     1.5  ...
-E001  protein          ADT     IFIT3      IFIT3_ADT   protein_output      0.7  ...
-
-这样你可以真正说：
-
-MoDES supports multi-omics evidence
-
-而不会污染主 schema。
+这样 reviewer 看到就会明白：
+MoDES 真正的 multi-omics 部分是长格式 evidence，而不是一堆动态列拼到主表里。
 
 ⸻
 
-3. 第三硬伤：StateClassifier 不能再 priority-based 返回第一个命中的 state
-
-现在 reviewer 抓住的是：
-
-先 epigenomic，再 protein，再 spatial，再 RA fallback
-priority order 决定 biological interpretation
-
-这确实危险。
-
-改成所有 states 同时打分
-
-不要：
-
-if epi:
-    return epi_state
-elif protein:
-    return protein_state
-elif spatial:
-    return spatial_state
-else:
-    return RA_state
-
-而是：
-
-candidate_states = []
-for rule in state_rules:
-    score = score_state(rule, evidence)
-    if score.is_valid:
-        candidate_states.append(score)
-best = select_best_state(candidate_states)
-
-⸻
-
-3.1 State score 组成
-
-每个 state 得到：
-
-support_pval
-support_qval
-n_required_satisfied
-n_conflicts
-quality_penalty
-missing_penalty
-assignment_score
-
-示例：
-
-assignment_score = (
-    evidence_strength
-    * quality_score
-    * conflict_penalty
-    * missing_penalty
-)
-
-其中：
-
-evidence_strength = -log10(state_support_pval)
-
-然后：
-
-best_state = highest assignment_score
-
-如果两个 state 分数接近，输出：
-
-mixed_evidence
-ambiguous
-
-而不是强行用 priority 决定。
-
-⸻
-
-3.2 新状态：mixed_evidence
-
-如果同时满足：
-
-active_mark_concordant
-protein_buffered
-
-或者：
-
-epigenomic activating ↑
-repressive mark ↑
-RNA ↑
-
-不要强制选一个。输出：
-
-mixed_evidence
-
-并在 conflicting_modalities 中写：
-
-cuttag_h3k27ac;cuttag_h3k27me3;protein
-
-这比 priority order 更可信。
-
-⸻
-
-4. 第四硬伤：EB refinement 需要降级或重做
-
-reviewer 对 EB 的批评完全成立。短期最安全路线：
-
-4.1 默认关闭 EB
-
-use_empirical_bayes=False
-
-如果保留：
-
-use_empirical_bayes=True
-
-文档写：
-
-experimental smoothing only
-not used for main results
-
-⸻
-
-4.2 state_confidence 改名
-
-改成：
-
-state_assignment_score
-
-不要叫：
-
-confidence
-posterior
-probability
-
-代码字段可以保留向后兼容，但主输出和论文用：
-
-state_assignment_score
-
-⸻
-
-4.3 小样本不要给 1.0
-
-现在小样本 / invalid evidence 时给 state_confidence = 1.0 很危险。
-
-改成：
-
-if invalid_evidence:
-    score = np.nan
-    state = "unresolved"
-
-如果 EB 样本不足：
-
-state_assignment_score = rule_score
-
-而不是：
-
-1.0
-
-⸻
-
-4.4 做 calibration benchmark
-
-输出：
-
-confidence_bin
-mean_score
-empirical_accuracy
-calibration_gap
-
-否则不要给出概率式解释。
-
-⸻
-
-5. 第五硬伤：conditional decomposition 仍然 RNA-after-ATAC only
-
-如果要叫 multi-omics，必须把 conditional decomposition 泛化。
-
-新增 ConditionalModelSpec
-
-@dataclass
-class ConditionalModelSpec:
-    response_modality: str
-    response_feature_role: str
-    conditioning_modalities: list[str]
-    name: str
-
-示例：
-
-RNA_AFTER_ATAC = ConditionalModelSpec(
-    response_modality="rna",
-    response_feature_role="gene",
-    conditioning_modalities=["atac"],
-    name="rna_after_atac",
-)
-RNA_AFTER_ACTIVE_MARK = ConditionalModelSpec(
-    response_modality="rna",
-    response_feature_role="gene",
-    conditioning_modalities=["cuttag_h3k27ac"],
-    name="rna_after_h3k27ac",
-)
-RNA_AFTER_ATAC_AND_MARK = ConditionalModelSpec(
-    response_modality="rna",
-    response_feature_role="gene",
-    conditioning_modalities=["atac", "cuttag_h3k27ac"],
-    name="rna_after_atac_h3k27ac",
-)
-PROTEIN_AFTER_RNA = ConditionalModelSpec(
-    response_modality="protein",
-    response_feature_role="protein",
-    conditioning_modalities=["rna"],
-    name="protein_after_rna",
-)
-
-⸻
-
-输出 conditional_effects.tsv
+4.3 conditional 结果单独放 conditional_effects.tsv
 
 字段：
 
@@ -577,376 +330,411 @@ condition_fdr
 attenuation
 model_used
 converged
+warning
 
-这样你可以说：
+这样你可以诚实地说：
 
-MoDES supports multi-layer conditional decomposition
+Conditional models are diagnostic layers. They are reported separately and optionally used in state scoring.
 
-否则就只能说 RNA-after-ATAC。
+不要把它们暗示成所有状态的核心 inferential engine，除非你真的把它们纳入 scoring。
 
 ⸻
 
-6. 第六硬伤：Spatial / Dynamic helper 没进主流程
+五、conditional decomposition 必须进入 state score，或明确降级成 diagnostic
 
-要么降级描述，要么真正接入。
+现在审稿人说：
 
-6.1 Spatial 接入方式
+multi-modal conditional models 被输出，但没有真正影响 state assignment。
 
-如果 data 是 SpatialMoDEData，build_evidence() 应该自动计算：
+这个批评很合理。
 
-spatial_moran_i
-spatial_moran_pval
-neighbor_effect
-edge_artifact_score
+你有两个选择。
 
-然后写进 event_modality_evidence.tsv：
+选择 A：降级
+
+文档写：
+
+Conditional decomposition is an optional diagnostic module.
+State assignment is based on marginal cross-modality evidence.
+
+这很诚实，也容易过审。
+
+选择 B：纳入 scoring
+
+例如：
+
+active_mark_concordant:
+  required: H3K27ac ↑, RNA ↑
+  optional diagnostic: RNA condition effect attenuated after H3K27ac adjustment
+
+assignment score 可以加一项：
+
+if attenuation_after_mark > threshold:
+    score *= 1.2
+
+但要小心，不要说这是因果证据。只能说：
+
+conditional attenuation-supported
+
+我建议大修阶段用选择 A。先过稿，不要把模型搞太复杂。
+
+⸻
+
+六、修 protein 和 CUT&Tag 的建模细节
+
+6.1 Protein 不能用 ATAC library size 做 offset
+
+审稿人抓得很准。Protein/ADT 应该有自己的 size factor。
+
+建议：
+
+protein_size_factor = protein total counts per sample
+
+或者：
+
+CLR / centered log ratio for ADT-like data
+
+至少你不能默认用 ATAC library size。
+
+实现上：
+
+if modality.assay == "PROTEIN":
+    offset = log(protein_counts.sum(axis=1))
+elif modality.feature_type == "region":
+    offset = log(modality_counts.sum(axis=1))
+elif modality.assay == "RNA":
+    offset = log(rna_counts.sum(axis=1))
+
+同时文档写：
+
+Protein modeling is experimental and uses protein-specific library-size normalization.
+
+⸻
+
+6.2 CUT&Tag / CUT&RUN / ChIP-seq 不能完全复用 ATAC 假设
+
+CUT&Tag/CUT&RUN/ChIP 的 region signal 和 ATAC 不同：
+
+histone mark 有 broad/narrow
+background 不同
+peak width 不同
+target specificity 不同
+
+短期可以仍用 NB GLM，但必须写：
+
+generic count-based marginal model
+
+不要写：
+
+assay-optimized model
+
+同时至少要支持：
+
+peak width covariate / offset
+blacklist flag
+region_match_score
+target-specific role
+
+⸻
+
+七、spatial 证据必须拆成不同 modality/role
+
+审稿人指出 spatial evidence 可能同一列重复满足多个 required evidence。这个要修。
+
+不要只有：
 
 modality = spatial
-feature_id = event_id or region
-coef = neighbor_effect
-pval = spatial_pval
-role = spatial_context
 
-否则 spatial state 不应该启用。
+而应该有：
 
-⸻
+spatial_moran
+spatial_neighbor
+spatial_edge
 
-6.2 Dynamic 接入方式
+或者：
 
-如果用户传：
+modality = spatial
+role = spatial_autocorrelation
+modality = spatial
+role = neighbor_effect
+modality = spatial
+role = edge_artifact
 
-time_col="pseudotime"
+_resolve_modality_evidence() 必须按：
 
-或：
+modality + role
 
-contrasts=[...]
+匹配，而不是只按 modality。
 
-主 pipeline 应该调用：
+spatial_niche_driven 应该要求：
 
-dynamic effect estimation
-pseudotime lag inference
+required_significant: spatial_neighbor
+optional_support: spatial_moran
+forbidden_significant: spatial_edge_artifact
 
-并生成：
-
-dynamic evidence
-
-否则 dynamic 模块只能叫 helper。
-
-⸻
-
-7. 第七硬伤：extra modality feature matching 太弱
-
-现在字符串匹配对于 CUT&Tag 很危险。
-
-7.1 CUT&Tag region matching 必须用 interval overlap
-
-不能靠：
-
-split("|")[0] == peak_id
-
-要支持：
-
-ATAC peak chr:start-end
-CUT&Tag peak chr:start-end
-
-计算 overlap：
-
-overlap_bp / min(width1, width2)
-overlap_bp / union_width
-reciprocal overlap
-
-匹配条件：
-
-min_reciprocal_overlap=0.5
-
-输出：
-
-region_match_score
-region_match_method
+而不是两个 generic spatial evidence。
 
 ⸻
 
-7.2 Protein 不要 fuzzy match 默认开启
+八、benchmark 必须从“规则同构”升级成 stress + validation
 
-protein-gene link 必须显式提供：
+你现在 benchmark 已经比以前多，但 reviewer 仍说“按规则生成，再按规则识别”。要破这个问题，必须加入和规则不完全同构的 benchmark。
 
-protein_id
-gene
+8.1 必须增加的 benchmark
 
-如果要 fuzzy match，必须：
-
-allow_fuzzy_protein_match=False
-
-默认 false。
-
-否则 reviewer 会说 toy match。
-
-⸻
-
-7.3 link uncertainty 进入 score
-
-每个 event 要有：
-
-link_score
-link_source
-region_match_score
-protein_link_score
-
-state score 应该有：
-
-assignment_score *= link_score
-
-这可以回应 link uncertainty 批评。
-
-⸻
-
-8. Benchmark 必须重做，不要再按规则生成规则
-
-现在 synthetic benchmark 太同构。要补这些。
-
-8.1 Null calibration
+Null benchmark
 
 condition label shuffle
-RNA sample shuffle
-ATAC sample shuffle
-CUT&Tag sample shuffle
-random peak-gene links
-random protein-gene links
+modality sample shuffle
+random links
 
-指标：
+目标：
 
-non_null_rate
-false_concordant_rate
-false_modality_state_rate
-state_support_qval distribution
+non-null rate 低
+support_score 不应过高
+artifact flag 不应乱触发
 
-⸻
+Link-noise benchmark
 
-8.2 Link-noise benchmark
+true links: 100 / 75 / 50 / 25%
+random links: 0 / 25 / 50 / 75%
 
-true links: 100%, 75%, 50%, 25%
-random links: 0%, 25%, 50%, 75%
+目标：
 
-看：
+state accuracy 随 link noise 合理下降
+random links 不应产生强 biological state enrichment
 
-state accuracy
-false concordant
-false active_mark_concordant
-false protein state
+Confounded benchmark
 
-⸻
-
-8.3 Batch/donor confounding
-
-模拟：
-
-balanced design
-partially confounded batch
-fully confounded batch
+batch partially confounded
 donor imbalance
 low replicate
+library size outlier
 
-输出：
+目标：
 
 false positive rate
 artifact_risk enrichment
-rank deficiency detection
+model warnings
 
-⸻
+Weak-effect benchmark
 
-8.4 Multi-peak / multi-mark dependency
+effect size small / medium / strong
 
-模拟：
+目标：
 
-one gene with 1 peak
-one gene with 10 peaks
-one gene with 50 peaks
-multiple histone marks per region
-multiple proteins per gene
+power curve
+state recovery curve
 
-看 event dependency 对 q-value 的影响。
+Ablation benchmark
 
-⸻
-
-8.5 Ablation
-
-至少：
-
-MoDES full
-without conditional decomposition
-without link_score weighting
-without quality/artifact flag
-without EB
-naive DE+DA overlap
+full MoDES
+no conditional
+no extra modality
+no artifact
+no EB
+naive overlap
 random links
-proximity-only links
-extra modality ignored
+
+目标：
+
+证明每个组件有价值
 
 ⸻
 
-9. 真实数据验证必须换思路
+8.2 必须补真实数据验证
 
-PBMC spike-in 不够。你需要至少一个真实 biological contrast。
+你现在不能再用 PBMC pseudo-condition + spike-in 当 real validation。
 
-最低真实验证组合
+最小需要一个真实 contrast：
 
-Dataset A：RNA+ATAC time / perturbation
+stimulation vs control
+treated vs untreated
+time-course early vs late
+differentiation stage A vs B
 
-目标：
+如果暂时找不到多模态数据，至少要有：
 
-chromatin_primed events 是否在后续时间点出现 RNA response
+RNA+ATAC 真实 contrast
+external validation:
+  known pathways
+  known marker genes
+  known enhancer-gene links
+  ChIP/CUT&Tag overlap
+  published TF programs
 
-验证：
-
-early primed → late RNA up
-random primed → no enrichment
-
-Dataset B：RNA+CUT&Tag 或 RNA+ATAC+CUT&Tag
-
-目标：
-
-active_mark_concordant 是否富集 H3K27ac-supported enhancer-gene links
-repressive_concordant 是否符合 H3K27me3/RNA opposite pattern
-
-Dataset C：RNA+protein
-
-目标：
-
-protein_buffered / protein_memory 是否出现在 known surface markers
-
-如果没有真实多模态数据，至少做：
-
-external ChIP/CUT&Tag overlap validation
+CUT&Tag/protein 的真实验证可以是 supplement，但 RNA+ATAC core 的真实验证必须有。
 
 ⸻
 
-10. 生物学语言必须降级
+九、文档必须彻底更新到 v2.0
 
-这些要改：
+这不是小事。现在 Major Revision 明确要求文档同步。
 
-drives transcriptional activation
-complete regulatory chain activation
+你要重写这些文件：
+
+docs/statistical_model.md
+docs/output_schema.md
+docs/install_review.md
+CITATION.cff
+README.md
+ROADMAP.md
+CHANGELOG.md
+
+9.1 statistical_model.md
+
+必须覆盖：
+
+1. v2.0 architecture
+2. event_modality_evidence long table
+3. StateRule grammar
+4. required / absent / forbidden / missing semantics
+5. state_assignment_score
+6. state_support_score
+7. why support score is not formal FDR
+8. conditional_effects as diagnostic
+9. experimental modalities
+10. limitations
+
+不要继续写 v0.1 RNA+ATAC 五步流程作为主文档。
+
+⸻
+
+9.2 output_schema.md
+
+必须写：
+
+event_table.tsv fixed schema
+event_modality_evidence.tsv long schema
+conditional_effects.tsv schema
+deprecated compatibility fields:
+  state_confidence
+  event_pval
+  event_fdr
+
+并写清楚：
+
+state_confidence is deprecated alias of state_assignment_score.
+event_pval/event_fdr are deprecated aliases or legacy ranking fields.
+
+⸻
+
+9.3 CITATION.cff
+
+改成当前版本：
+
+version: 2.0.0
+
+或者即将重投版本。
+
+⸻
+
+9.4 install_review.md
+
+重新跑 fresh install，更新：
+
+version
+test count
+CI status
+examples
+benchmarks
+
+⸻
+
+十、生物学措辞必须降级
+
+这类句子要改：
+
+Local chromatin opening drives transcriptional activation
+Complete regulatory chain activation through to protein output
+Protein memory persists
 TF regulator
-protein memory
-causal regulatory event
 
 改成：
 
-ATAC and RNA changes are concordant
-candidate activating mark-associated event
+Local chromatin accessibility and RNA abundance change concordantly
+ATAC, RNA, and protein layers show concordant differential signal
+Protein-layer signal persists relative to RNA signal
 candidate TF motif annotation
-protein-layer discordance
-putative regulatory association
 
-示例：
-
-原：
-
-Local chromatin opening drives transcriptional activation.
-
-改：
-
-Local chromatin accessibility and RNA abundance change concordantly under the tested contrast.
-
-原：
-
-Complete regulatory chain activation through to protein output.
-
-改：
-
-ATAC, RNA and protein layers show concordant differential signal.
+这一步很重要。Reviewer 已经明确说这不是文字洁癖，是机制主张过强。
 
 ⸻
 
-11. 给你一个最小可接受 v2.0 修复路线
+十一、给你一份大修任务清单
 
-如果你要继续叫 multi-omics，最小要完成这 8 个。
+按优先级执行。
 
-1. 主输出拆表
+P0：必须修，不修下一轮仍会被拒
 
-event_table.tsv 固定主表
-event_modality_evidence.tsv 长格式多模态证据
-conditional_effects.tsv 多模型条件分解
-
-2. StateRule grammar
-
-所有 state 都由 grammar 定义，不再 priority if-else。
-
-3. state_support_pval
-
-每个 state 的 p-value 来自触发该 state 的 required modalities。
-
-4. state_assignment_score
-
-替代 state_confidence，不叫 posterior。
-
-5. 多模态 conditional decomposition
-
-至少实现：
-
-RNA after ATAC
-RNA after H3K27ac
-RNA after ATAC+H3K27ac
-Protein after RNA
-
-6. CUT&Tag interval overlap
-
-不能字符串匹配。
-
-7. stress benchmarks
-
-必须有：
-
-null
-link-noise
-batch-confounded
-weak-effect
-ablation
-
-8. 至少一个真实 non-RNA+ATAC demo
-
-比如 RNA+CUT&Tag 或 RNA+ATAC+protein。
+1. 重写 StateRule：
+   - 支持 up/down 双方向
+   - 支持 required_significant / required_absent / forbidden / missing
+   - 修 active_enhancer_primed vs mark_only
+   - 修 protein_buffered / protein_memory 逻辑
+2. 把 event_table 固定化，extra modalities 移到 event_modality_evidence.tsv
+3. 把 state_support_pval/qval 改名或降级：
+   - state_support_score
+   - state_support_adjusted_score
+   或明确 qval only for ranking
+4. 不再把 directed_pvalue 当正式 p-value 使用，或完成 calibration
+5. 更新 statistical_model.md / output_schema.md 到 v2.0
+6. 修 protein normalization，不再用 ATAC library size
+7. spatial evidence 拆成 moran / neighbor / edge roles
+8. 降级 README 所有因果措辞
 
 ⸻
 
-12. 如果你现在要回这位 reviewer，应该怎么说？
+P1：大修验证必须补
 
-不要说：
-
-We now support all modalities, therefore the concern is addressed.
-
-要说：
-
-We agree that the previous implementation was modality-aware but not modality-consistent. In the revised version, we restructure MoDES around a long-format event-modality evidence table, state-specific evidence rules, state-support p-values derived from the modalities that trigger each state, and modality-specific conditional decompositions. We also rename state_confidence to state_assignment_score and explicitly avoid posterior interpretation. We add null, link-noise, batch-confounded, weak-effect and ablation benchmarks, plus real multi-modal validation.
-
-这才是正面回应。
+9. Null calibration benchmark
+10. Link-noise benchmark
+11. Batch/donor-confounded benchmark
+12. Weak-effect benchmark
+13. Ablation benchmark
+14. 真实 biological contrast 数据
+15. external validation：
+    - known pathway
+    - known markers
+    - published enhancer-gene links
+    - ChIP/CUT&Tag overlap or TF program
 
 ⸻
 
-13. 最终判断
+P2：文档和 release 统一
 
-这份三审拒稿不是坏事，它告诉你现在的 v2.0 真正缺什么。
+16. CITATION.cff version 更新
+17. install_review 更新
+18. ROADMAP 改掉 overclaim
+19. GitHub tag message 改掉 “Full multi-modal platform”
+20. README dependency 加 scikit-learn
+21. README clearly says experimental modalities are not validated inference layers
 
-你现在的 MoDES 是 multi-modal interface，但还不是 multi-modal inference/statistical engine。
+⸻
 
-要跨过去，必须做三件根本改变：
+十二、如果你要写 rebuttal，可以这么写
 
-1. 多模态证据长表化；
-2. state p-value 与触发 state 的 modalities 绑定；
-3. state classifier 从 priority rules 改成 grammar-based scoring。
+你可以在 response letter 里这样承认并回应：
 
-然后补：
+We agree that the previous v2.0 revision made the software modality-aware but did not sufficiently clarify the statistical interpretation of state support values. In the revised version, we separate fixed event-level summaries from long-format modality evidence, replace priority-based rules with explicit StateRule conditions including required, absent, forbidden and missing evidence, and rename state confidence fields to assignment scores. We also remove claims of formal post-selection FDR and provide calibration and null benchmarks. Conditional decompositions are now presented as diagnostic models rather than causal evidence unless explicitly validated.
 
-conditional decomposition 多模态化
-interval-based feature matching
-stress benchmarks
-真实非 RNA+ATAC 验证
-生物学措辞降级
+这段比“我们已经支持多模态了”有力得多。
 
-完成这些后，MoDES 才能比较有底气地叫：
+⸻
 
-multi-omics event-state framework
+十三、最终判断
 
-否则，它还是会被审稿人定位成：
+这次 Major Revision 是好消息。它说明：
 
-RNA+ATAC core plus extra modality rule extensions
+审稿人已经承认 MoDES 有软件架构价值；
+现在卡的是统计解释、规则逻辑、文档同步和真实验证。
+
+你要做的不是再堆更多模态，而是：
+
+把已有多模态从 interface 变成 evidence framework；
+把 state rules 从优先级 if/else 变成严谨 grammar；
+把 p/q/confidence 全部降级或校准；
+把 benchmark 从 toy recovery 变成 stress validation；
+把真实数据从 spike-in 变成 biological contrast。
+
+如果这些完成，下一轮有机会从 Major Revision 走向接收；如果只是继续加功能，下一轮仍然会被拒。

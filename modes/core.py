@@ -353,14 +353,30 @@ class MoDES:
             # Quality
             quality = float(event.get("quality_score", 0.5)) if "quality_score" in event.index else 0.5
 
+            # Link score: confidence in peak-gene link (0-1)
+            link_source = str(event.get("link_source", ""))
+            link_score = _compute_link_score(link_source, event.get("distance_to_tss", 0))
+
+            # v2.0: assignment_score incorporates link uncertainty per reviewer feedback
+            adjusted_assignment = (assignment_score * link_score) if not np.isnan(assignment_score) else np.nan
+
             rec = {
                 "event_id": eid,
                 "tf_name": event.get("tf_name"),
                 "peak_id": peak,
                 "gene": gene,
                 "context": event.get("context", ""),
-                "link_source": event.get("link_source", ""),
-                "link_score": event.get("distance_to_tss", 0),
+                "link_source": link_source,
+                "link_score": link_score,
+                "state": state,
+                "state_assignment_score": adjusted_assignment,
+                "state_support_pval": support_pval,
+                "state_support_qval": support_qval,
+                "supporting_modalities": supporting,
+                "neutral_modalities": neutral,
+                "conflicting_modalities": conflicting,
+                "atac_coef": atac.coef if atac else np.nan,
+                "atac_se": atac.se if atac else np.nan,
                 "state": state,
                 "state_assignment_score": assignment_score,
                 "state_support_pval": support_pval,
@@ -569,6 +585,23 @@ class MoDES:
                 continue
             rows.extend(_add_rows(self.effects[mod_name], mod_name.upper()))
         return pd.DataFrame(rows)
+
+
+def _compute_link_score(link_source: str, distance: int | float) -> float:
+    """Compute peak-gene link confidence score.
+
+    Returns 0-1 where 1 = highest confidence (promoter), lower = less certain.
+    """
+    if not link_source or link_source == "":
+        return 0.5
+    if "promoter" in link_source:
+        return 1.0
+    if "external" in link_source and "distal" not in link_source:
+        return 0.85
+    if "distal" in link_source:
+        d = abs(float(distance))
+        return max(0.1, 1.0 / (1.0 + d / 10000.0))
+    return 0.5
 
 
 def _model_used(eff) -> str:

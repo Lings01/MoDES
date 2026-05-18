@@ -195,13 +195,50 @@ def main():
                "n_events": naive_total}
     all_metrics.append(m_naive)
 
+    out_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # --- 5. Calibration: assignment_score vs empirical accuracy ---
+    print("[5/5] Calibration analysis...")
+    et_full = result_full.event_table
+    known_genes = dict(zip(genes[:10], ["concordant"] * 10))
+    known_genes.update(dict(zip(genes[10:20], ["chromatin_primed"] * 10)))
+
+    cal_rows = []
+    for _, row in et_full.iterrows():
+        g = row["gene"]
+        if g in known_genes:
+            cal_rows.append({
+                "gene": g,
+                "true_state": known_genes[g],
+                "pred_state": row["state"],
+                "assignment_score": row.get("state_assignment_score", np.nan),
+            })
+    cal_df = pd.DataFrame(cal_rows)
+    if len(cal_df) > 0 and cal_df["assignment_score"].notna().sum() >= 4:
+        cal_df["correct"] = cal_df["true_state"] == cal_df["pred_state"]
+        cal_df["score_bin"] = pd.cut(
+            cal_df["assignment_score"].fillna(0),
+            bins=[0, 0.2, 0.5, 0.8, 1.0, 100],
+            labels=["0-0.2", "0.2-0.5", "0.5-0.8", "0.8-1.0", ">1.0"],
+        )
+        cal_summary = cal_df.groupby("score_bin", observed=False).agg(
+            n=("correct", "count"),
+            n_correct=("correct", "sum"),
+            mean_score=("assignment_score", "mean"),
+        ).reset_index()
+        cal_summary["empirical_accuracy"] = cal_summary["n_correct"] / cal_summary["n"]
+        cal_summary["calibration_gap"] = cal_summary["empirical_accuracy"] - cal_summary["mean_score"].clip(0, 1)
+        print(cal_summary.to_string(index=False))
+        cal_summary.to_csv(
+            os.path.join(os.path.dirname(__file__), "output", "calibration.tsv"),
+            sep="\t", index=False,
+        )
+
     # --- Output ---
     metrics_df = pd.DataFrame(all_metrics)
     print(f"\nBenchmark Metrics:")
     print(metrics_df.to_string(index=False))
-
-    out_dir = os.path.join(os.path.dirname(__file__), "output")
-    os.makedirs(out_dir, exist_ok=True)
     metrics_df.to_csv(os.path.join(out_dir, "benchmark_metrics.tsv"), sep="\t", index=False)
     print(f"\nOutput: {out_dir}")
 
