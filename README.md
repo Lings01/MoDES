@@ -1,11 +1,12 @@
-# MoDES: Multi-Omics Discordance/Event State inference
+# MoDES: Multi-Omics Evidence Framework for Regulatory Event-State Annotation
 
 ![tests](https://github.com/Lings01/MoDES/actions/workflows/tests.yml/badge.svg)
 
-A statistical framework that treats regulatory events — not genes, peaks, or clusters —
-as the primary unit of analysis. Instead of compressing multi-omics layers into a single
-embedding, MoDES uses cross-modality concordance and discordance to classify each event
-into an interpretable regulatory state with artifact risk assessment.
+MoDES is a multi-omics evidence scoring and state annotation framework that treats
+regulatory events — not genes, peaks, or clusters — as the unit of analysis.
+Each event's multi-modal evidence pattern is scored against a grammar of biological
+state rules to produce a state annotation and a state-support p-value derived from
+the modalities that define that state. Artifact risk is assessed independently.
 
 ---
 
@@ -19,8 +20,8 @@ open." This implicitly treats one modality as primary and others as validation l
 
 MoDES takes a different approach:
 
-> **RNA, ATAC, and protein are not primary vs. secondary layers; they are different
-> observation layers of the same regulatory event.**
+> **RNA, ATAC, CUT&Tag, and protein are different observation layers of the same
+> candidate regulatory event, each contributing evidence to state annotation.**
 
 - **Concordance** — complete regulatory chain activation: chromatin → transcription → protein
 - **ATAC-only** (chromatin priming) — chromatin is open but transcription has not started
@@ -58,10 +59,10 @@ modalities. With RNA+ATAC (the core layer), five states are available:
 
 | State | Pattern | Biological Interpretation |
 |---|---|---|
-| `concordant` | ATAC↑ RNA↑ same direction | Local chromatin opening drives transcriptional activation (intact cis-regulatory chain) |
-| `chromatin_primed` | ATAC↑ RNA→ | Chromatin is open but transcription has not started (epigenetic priming) |
-| `rna_only` | ATAC→ RNA↑ | RNA change not explained by local chromatin (trans regulation, RNA stability, unmeasured layer) |
-| `discordant_opposite` | ATAC↑ RNA↓ opposite direction | Opposite directions across layers; may indicate complex regulation or technical issues |
+| `concordant` | ATAC↑ RNA↑ same direction | ATAC and RNA change concordantly in the same direction under the tested contrast |
+| `chromatin_primed` | ATAC↑ RNA→ | Chromatin accessibility changes without corresponding RNA change |
+| `rna_only` | ATAC→ RNA↑ | RNA change not accompanied by local chromatin accessibility change |
+| `discordant_opposite` | ATAC↑ RNA↓ opposite direction | ATAC and RNA change in opposite directions |
 | `null` | ATAC→ RNA→ | No significant change under the current condition |
 
 When epigenomic (CUT&Tag) or protein data are provided via the v2.0 multi-modal API,
@@ -69,13 +70,13 @@ additional states become available:
 
 | State | Required Modalities | Biological Interpretation |
 |---|---|---|
-| `epigenomic_concordant` | RNA+ATAC+CUT&Tag | Full concordance through chromatin, transcription, and histone modification |
-| `active_enhancer_primed` | RNA+CUT&Tag | Activating histone mark present without transcriptional change (poised enhancer) |
-| `repressive_concordant` | RNA+ATAC+CUT&Tag | Repressive histone mark accompanies transcriptional silencing |
+| `epigenomic_concordant` | RNA+ATAC+CUT&Tag | ATAC, RNA, and activating histone mark change concordantly |
+| `active_enhancer_primed` | RNA+CUT&Tag | Activating histone mark present; RNA not yet responding |
+| `repressive_concordant` | RNA+ATAC+CUT&Tag | Repressive histone mark gain with RNA decrease |
 | `mark_only` | CUT&Tag | Histone mark change without detectable RNA or ATAC change |
-| `full_activation` | RNA+ATAC+Protein | Complete regulatory chain activation through to protein output |
-| `protein_buffered` | RNA+Protein | Transcriptional change buffered at the protein level |
-| `protein_memory` | RNA+Protein | Protein change persists after RNA returns to baseline |
+| `full_activation` | RNA+ATAC+Protein | ATAC, RNA, and protein show concordant differential signal |
+| `protein_buffered` | RNA+Protein | RNA changes but protein level does not (post-transcriptional layer discordance) |
+| `protein_memory` | RNA+Protein | Protein change observed while RNA has returned to baseline |
 
 CUT&Tag and protein states are **experimental** — they extend the validated RNA+ATAC
 core and should be interpreted with additional caution.
@@ -369,6 +370,10 @@ The key quantity is the attenuation of β_cond from Model 0 to Model 1:
 > **Note**: The conditional model uses a single linked peak as covariate. The correct
 > interpretation is "condition effect after adjustment for the linked ATAC peak," not
 > "ATAC explains RNA."
+>
+> **v2.0 experimental**: Multi-modal conditional decomposition supports additional models:
+> `rna_after_h3k27ac`, `rna_after_atac_h3k27ac`, and `protein_after_rna`, output to
+> `conditional_effects.tsv`.
 
 ### Step 4: Evidence Vector Construction
 
@@ -509,24 +514,17 @@ BH correction is applied across all events to produce `event_fdr`.
 
 ### 10.1 How to Read States
 
-**concordant** — High-confidence cis-regulatory event. Local chromatin opening is
-accompanied by transcriptional increase. Suitable for building core regulatory networks.
+**concordant** — ATAC and RNA change concordantly. Candidate cis-regulatory events
+suitable for building core regulatory networks.
 
-**chromatin_primed** — Chromatin has changed but transcription has not. May represent:
-- Lineage priming during development
-- Early epigenetic response to drug treatment
-- Poised enhancers requiring a second stimulus
+**chromatin_primed** — Chromatin has changed but transcription has not, under this
+contrast. May represent poised or delayed regulation.
 
-**rna_only** — RNA change not explained by local ATAC. May arise from:
-- Trans regulation via distal enhancers
-- RNA stability changes
-- TF activity changes without chromatin remodeling
-- Peak calling that missed key regulatory regions
+**rna_only** — RNA change not accompanied by local chromatin change. May arise from
+distal regulation, RNA stability, or peak calling that missed key regions.
 
-**discordant_opposite** — ATAC and RNA move in opposite directions. Common explanations:
-- Negative feedback regulation
-- Repressor binding
-- Requires further experimental validation
+**discordant_opposite** — ATAC and RNA move in opposite directions. Requires
+additional validation to distinguish biological signal from technical noise.
 
 **null** — No significant change under the current condition for this event.
 
