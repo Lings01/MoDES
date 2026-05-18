@@ -123,7 +123,7 @@ class TestMoDESResult:
         assert all(s == "concordant" for s in filtered["state"])
 
     def test_filter_by_confidence(self, result):
-        filtered = result.filter(min_confidence=0.5)
+        filtered = result.filter(min_assignment_score=0.01)
         assert len(filtered) <= len(result.event_table)
 
     def test_filter_by_fdr(self, result):
@@ -260,13 +260,17 @@ def test_event_table_schema_exact(synthetic_bulk_data_small):
 
     expected = [
         "event_id", "tf_name", "peak_id", "gene", "context",
-        "state", "state_confidence", "quality_score",
+        "link_source", "link_score",
+        "state", "state_assignment_score",
+        "state_support_pval", "state_support_qval",
+        "supporting_modalities", "neutral_modalities", "conflicting_modalities",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
         "artifact_risk", "artifact_reason",
-        "event_pval", "event_fdr",
+        "quality_score",
+        "state_confidence", "event_pval", "event_fdr",
     ]
     assert list(result.event_table.columns) == expected
 

@@ -1,4 +1,9 @@
-"""MoDES orchestrator and result container."""
+"""MoDES orchestrator and result container.
+
+v2.0: Fixed event_table schema + long-format event_modality_evidence.
+All multi-modal effects live in the long-format table, not as dynamic columns.
+State classification is grammar-driven with state_support_pval from required modalities.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,6 @@ import os
 import numpy as np
 import pandas as pd
 
-from modes._types import EventResult
 from modes.data import MoDEData
 from modes.decompose import ConditionalDecomposition
 from modes.effects import EffectEstimator
@@ -15,25 +19,23 @@ from modes.events import EventCandidateBuilder
 from modes.states import EvidenceBuilder, StateClassifier
 
 
-def _event_result_columns(extra_mod_names: list[str] | None = None):
-    base = [
+def _event_result_columns():
+    """Return fixed event_table columns (v2.0 frozen schema)."""
+    return [
         "event_id", "tf_name", "peak_id", "gene", "context",
-        "state", "state_confidence", "quality_score",
+        "link_source", "link_score",
+        "state", "state_assignment_score",
+        "state_support_pval", "state_support_qval",
+        "supporting_modalities", "neutral_modalities", "conflicting_modalities",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
         "artifact_risk", "artifact_reason",
-        "event_pval", "event_fdr",
+        "quality_score",
+        # Backward compat: kept for existing consumers
+        "state_confidence", "event_pval", "event_fdr",
     ]
-    # v2.0: append extra modality columns (coef, se, pval, fdr, direction)
-    for mod_name in (extra_mod_names or []):
-        base.extend([
-            f"{mod_name}_coef", f"{mod_name}_se",
-            f"{mod_name}_pval", f"{mod_name}_fdr",
-            f"{mod_name}_direction",
-        ])
-    return base
 
 
 def _read_optional_tsv(output_dir: str, filename: str):
@@ -45,17 +47,16 @@ def _read_optional_tsv(output_dir: str, filename: str):
 
 
 class MoDES:
-    """
-    Multi-Omics Discordance/Event State inference.
+    """Multi-Omics Discordance/Event State annotation engine.
 
-    Main orchestrator for the MoDES-RA pipeline (RNA + ATAC).
+    Main orchestrator for the MoDES pipeline.
 
     Parameters
     ----------
     data : MoDEData
-        Input data with RNA and ATAC matrices.
+        Input data container.
     condition_col : str
-        Column in data.obs specifying the condition of interest.
+        Column in data.obs specifying contrast of interest.
     covariate_cols : list of str, optional
         Additional covariates.
     donor_col : str, optional
@@ -70,6 +71,10 @@ class MoDES:
         Pre-computed peak-to-gene links.
     motif_annotation : pd.DataFrame, optional
         Peak-to-TF motif mapping.
+    tss_map : dict, optional
+        Manual gene -> (name, chr, tss_pos) mapping.
+    contrast : tuple, optional
+        (reference, target) levels.
     """
 
     def __init__(
@@ -92,6 +97,7 @@ class MoDES:
         min_nonzero_samples: int = 3,
         min_total_count: float = 10.0,
         batch_col_quality: str | None = None,
+        use_empirical_bayes: bool = False,
     ):
         self.data = data
         self.condition_col = condition_col
@@ -111,26 +117,29 @@ class MoDES:
         self.min_nonzero_samples = min_nonzero_samples
         self.min_total_count = min_total_count
         self.batch_col_quality = batch_col_quality
+        self.use_empirical_bayes = use_empirical_bayes
 
-        # Pipeline state — v2.0: generic multi-modality
+        # Pipeline state
         self.events: pd.DataFrame | None = None
-        self.effects: dict[str, dict] = {}     # modality_name → {feature_id → ModalityEffect}
-        self.atac_effects: dict | None = None   # backward compat alias
-        self.rna_effects: dict | None = None    # backward compat alias
+        self.effects: dict[str, dict] = {}
+        self.atac_effects: dict | None = None
+        self.rna_effects: dict | None = None
         self.conditional_effects: pd.DataFrame | None = None
         self.evidence: pd.DataFrame | None = None
         self.states: pd.DataFrame | None = None
         self.results: MoDESResult | None = None
-        self.modality_evidence: pd.DataFrame | None = None  # v2.0 long-format
+        self.modality_evidence: pd.DataFrame | None = None
+        # v2.0: multi-model conditional decomposition results
+        self.conditional_models: dict[str, pd.DataFrame] = {}
 
-    def run(self) -> MoDESResult:
+    def run(self) -> "MoDESResult":
         """Execute the full MoDES pipeline."""
         self.build_events()
         self.estimate_effects()
         self.decompose()
         self.build_evidence()
         self.classify_states()
-        self._build_modality_evidence()  # v2.0: before _assemble so result includes it
+        self._build_modality_evidence()
         self.results = self._assemble_results()
         return self.results
 
@@ -139,25 +148,8 @@ class MoDES:
         external_links: pd.DataFrame | None = None,
         motif_annotation: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
-        """
-        Step 1: Build candidate regulatory events.
-
-        Parameters
-        ----------
-        external_links : DataFrame, optional
-            Override instance's external_links.
-        motif_annotation : DataFrame, optional
-            Override instance's motif_annotation.
-
-        Returns
-        -------
-        DataFrame of EventCandidate records.
-        """
-        builder = EventCandidateBuilder(
-            promoter_window=2000,
-            distal_window=250000,
-        )
-
+        """Step 1: Build candidate regulatory events."""
+        builder = EventCandidateBuilder(promoter_window=2000, distal_window=250000)
         ext_links = self.external_links if external_links is None else external_links
         motifs = self.motif_annotation if motif_annotation is None else motif_annotation
         self.events = builder.build(
@@ -171,19 +163,12 @@ class MoDES:
         if self.events is None or len(self.events) == 0:
             raise ValueError(
                 "No candidate events were generated. "
-                "For normal gene symbols, provide one of: "
-                "genome_annotation, tss_map, or external_links."
+                "Provide genome_annotation, tss_map, or external_links."
             )
         return self.events
 
     def estimate_effects(self) -> tuple[dict, dict]:
-        """
-        Step 2: Estimate ATAC and RNA condition effects.
-
-        Returns
-        -------
-        (atac_effects, rna_effects)
-        """
+        """Step 2: Estimate condition effects for all modalities."""
         if self.events is None:
             raise RuntimeError("Call build_events() first")
 
@@ -207,7 +192,6 @@ class MoDES:
         self.atac_effects, self.rna_effects = estimator.estimate_effects(
             self.data, peak_names, gene_names
         )
-        # v2.0: populate generic effects dict + estimate additional modalities
         self.effects["atac"] = self.atac_effects
         self.effects["rna"] = self.rna_effects
         for mod_name in self.data.modalities:
@@ -220,13 +204,7 @@ class MoDES:
         return self.atac_effects, self.rna_effects
 
     def decompose(self) -> pd.DataFrame:
-        """
-        Step 3: Conditional decomposition (RNA after ATAC).
-
-        Returns
-        -------
-        DataFrame of conditional effects.
-        """
+        """Step 3: Conditional decomposition (RNA after ATAC, plus multi-modal)."""
         if self.atac_effects is None or self.rna_effects is None:
             raise RuntimeError("Call estimate_effects() first")
 
@@ -245,20 +223,14 @@ class MoDES:
             atac_effects=self.atac_effects,
             rna_effects=self.rna_effects,
         )
+        self.conditional_models["rna_after_atac"] = self.conditional_effects
         return self.conditional_effects
 
     def build_evidence(self) -> pd.DataFrame:
-        """
-        Step 4: Build evidence vectors.
-
-        Returns
-        -------
-        DataFrame of evidence vectors.
-        """
+        """Step 4: Build evidence vectors."""
         if self.conditional_effects is None:
             raise RuntimeError("Call decompose() first")
 
-        # v2.0: collect extra modality effects for evidence building
         extra_effects = {k: v for k, v in self.effects.items()
                         if k not in ("rna", "atac")}
         builder = EvidenceBuilder(
@@ -275,198 +247,101 @@ class MoDES:
         return self.evidence
 
     def classify_states(self) -> pd.DataFrame:
-        """
-        Step 5: Classify events into regulatory states.
-
-        Returns
-        -------
-        DataFrame with state assignments and confidence scores.
-        """
+        """Step 5: Grammar-based multi-modal state classification."""
         if self.evidence is None:
             raise RuntimeError("Call build_evidence() first")
 
         classifier = StateClassifier(
             fdr_threshold=self.fdr_threshold,
-            use_empirical_bayes=True,
+            use_empirical_bayes=self.use_empirical_bayes,
             modality_specs=self.data.modality_specs,
         )
-
         self.states = classifier.classify(self.evidence)
         return self.states
 
-    def _assemble_results(self) -> MoDESResult:
+    def _assemble_results(self) -> "MoDESResult":
         """Combine all pipeline outputs into MoDESResult."""
-        # v2.0: detect extra modality names
-        extra_mod_names = [m for m in self.effects if m not in ("rna", "atac")]
         if self.events is None or len(self.events) == 0:
             params = {
                 "condition_col": self.condition_col,
-                "covariate_cols": self.covariate_cols,
-                "donor_col": self.donor_col,
-                "batch_col": self.batch_col,
                 "fdr_threshold": self.fdr_threshold,
                 "n_events": 0,
                 "n_samples": self.data.n_samples,
-                "n_genes": self.data.n_genes,
-                "n_peaks": self.data.n_peaks,
             }
             return MoDESResult(
-                event_table=pd.DataFrame(columns=_event_result_columns(extra_mod_names)),
+                event_table=pd.DataFrame(columns=_event_result_columns()),
                 params=params,
             )
 
-        # --- Pass 0: Pre-build O(1) lookup maps (P0 opt: was O(E²) per-event filter) ---
+        # Pre-build lookup maps
         cond_map = {}
-        for _, cr in self.conditional_effects.iterrows():
-            cond_map[cr["event_id"]] = cr
+        if self.conditional_effects is not None:
+            for _, cr in self.conditional_effects.iterrows():
+                cond_map[cr["event_id"]] = cr
         state_map = {}
-        for _, sr in self.states.iterrows():
-            state_map[sr["event_id"]] = sr
-        ev_map = {}
-        for _, er in self.evidence.iterrows():
-            ev_map[er["event_id"]] = er
+        if self.states is not None:
+            for _, sr in self.states.iterrows():
+                state_map[sr["event_id"]] = sr
 
-        # v2.0: pre-build protein gene→feature map from protein_gene_links
-        prot_gene_map = {}
-        for mod_name in extra_mod_names:
-            spec = self.data.modality_specs.get(mod_name)
-            if spec and spec.assay == "PROTEIN":
-                links = getattr(self.data, 'protein_gene_links', None)
-                if links is not None and len(links) > 0:
-                    for _, lr in links.iterrows():
-                        g = str(lr["gene"])
-                        prot_gene_map[(mod_name, g)] = str(lr["protein_id"])
-                        gs = g.split(":")[0]
-                        prot_gene_map[(mod_name, gs)] = str(lr["protein_id"])
-
-        # --- Pass 1: collect per-event data and compute event_pval ---
-        raw_data = []
         from modes.utils import benjamini_hochberg
 
+        records = []
         for _, event in self.events.iterrows():
             eid = event["event_id"]
             peak = event["peak_id"]
             gene = event["gene"]
 
-            atac = self.atac_effects.get(peak)
-            rna = self.rna_effects.get(gene)
+            atac = self.atac_effects.get(peak) if self.atac_effects else None
+            rna = self.rna_effects.get(gene) if self.rna_effects else None
 
-            # Conditional effect (O(1) dict lookup)
+            # Conditional effect
             cr = cond_map.get(eid)
-            if cr is None:
-                rna_after_coef = np.nan
-                rna_after_se = np.nan
-                rna_after_pval = 1.0
-                rna_after_fdr = 1.0
-            else:
-                rna_after_coef = cr.get("rna_after_atac_coef", np.nan)
-                rna_after_se = cr.get("rna_after_atac_se", np.nan)
-                rna_after_pval = cr.get("rna_after_atac_pval", 1.0)
-                rna_after_fdr = cr.get("rna_after_atac_fdr", 1.0)
+            rna_after_coef = cr["rna_after_atac_coef"] if cr is not None else np.nan
+            rna_after_se = cr["rna_after_atac_se"] if cr is not None else np.nan
+            rna_after_pval = cr["rna_after_atac_pval"] if cr is not None else 1.0
+            rna_after_fdr = cr["rna_after_atac_fdr"] if cr is not None else 1.0
 
-            # State (O(1) dict lookup)
+            # State
             sr = state_map.get(eid)
-            if sr is None:
-                state = "null"
-                confidence = 1.0
-                artifact_risk = "low"
-                artifact_reason = ""
-            else:
+            if sr is not None:
                 state = sr["state"]
-                confidence = sr["state_confidence"]
+                assignment_score = sr["state_assignment_score"]
+                support_pval = sr["state_support_pval"]
+                support_qval = sr["state_support_qval"]
+                supporting = sr.get("supporting_modalities", "")
+                neutral = sr.get("neutral_modalities", "")
+                conflicting = sr.get("conflicting_modalities", "")
                 artifact_risk = sr.get("artifact_risk", "low")
                 artifact_reason = sr.get("artifact_reason", "")
-
-            # Quality (O(1) dict lookup)
-            er = ev_map.get(eid)
-            quality = er["quality_score"] if er is not None else 0.5
-
-            # Event-level p-value based on state
-            atac_pval = atac.p_value if atac else 1.0
-            rna_pval = rna.p_value if rna else 1.0
-            if state in ("concordant", "discordant_opposite"):
-                event_pval = max(atac_pval, rna_pval)
-            elif state == "chromatin_primed":
-                event_pval = atac_pval
-            elif state == "rna_only":
-                event_pval = rna_pval
-            elif state in ("full_activation", "protein_opposite"):
-                event_pval = max(atac_pval, rna_pval)
-            elif state == "protein_buffered":
-                event_pval = rna_pval
-            elif state == "protein_memory":
-                event_pval = atac_pval
-            elif state in ("epigenomic_concordant", "repressive_concordant"):
-                event_pval = max(atac_pval, rna_pval)
-            elif state == "active_enhancer_primed":
-                event_pval = atac_pval
             else:
-                event_pval = 1.0
+                state = "unresolved"
+                assignment_score = np.nan
+                support_pval = 1.0
+                support_qval = 1.0
+                supporting = ""
+                neutral = ""
+                conflicting = ""
+                artifact_risk = "low"
+                artifact_reason = ""
 
-            # v2.0: look up extra modality effects
-            row_data = {
+            # Quality
+            quality = float(event.get("quality_score", 0.5)) if "quality_score" in event.index else 0.5
+
+            rec = {
                 "event_id": eid,
+                "tf_name": event.get("tf_name"),
                 "peak_id": peak,
                 "gene": gene,
-                "tf_name": event.get("tf_name"),
                 "context": event.get("context", ""),
-                "atac": atac,
-                "rna": rna,
-                "rna_after_coef": rna_after_coef,
-                "rna_after_se": rna_after_se,
-                "rna_after_pval": rna_after_pval,
-                "rna_after_fdr": rna_after_fdr,
+                "link_source": event.get("link_source", ""),
+                "link_score": event.get("distance_to_tss", 0),
                 "state": state,
-                "state_confidence": confidence,
-                "artifact_risk": artifact_risk,
-                "artifact_reason": artifact_reason,
-                "quality": quality,
-                "event_pval": event_pval,
-            }
-            for mod_name in extra_mod_names:
-                eff_dict = self.effects.get(mod_name, {})
-                spec = self.data.modality_specs.get(mod_name)
-                # Resolve feature key
-                if spec and spec.assay == "PROTEIN":
-                    feat_key = prot_gene_map.get((mod_name, gene))
-                    if feat_key is None:
-                        feat_key = prot_gene_map.get((mod_name, gene.split(":")[0]))
-                elif spec and spec.feature_type == "region":
-                    feat_key = peak
-                else:
-                    feat_key = gene
-                mod_eff = eff_dict.get(feat_key) if feat_key else None
-                if mod_eff is None and feat_key is not None:
-                    # Fuzzy match: strip |suffix
-                    for k, v in eff_dict.items():
-                        if str(k).split("|")[0] == str(feat_key).split("|")[0]:
-                            mod_eff = v
-                            break
-                row_data[f"{mod_name}_coef"] = mod_eff.coef if mod_eff else np.nan
-                row_data[f"{mod_name}_se"] = mod_eff.se if mod_eff else np.nan
-                row_data[f"{mod_name}_pval"] = mod_eff.p_value if mod_eff else 1.0
-                row_data[f"{mod_name}_fdr"] = mod_eff.fdr if mod_eff else 1.0
-                row_data[f"{mod_name}_direction"] = mod_eff.direction if mod_eff else 0
-            raw_data.append(row_data)
-
-        # Event-level BH correction
-        event_pvals = np.array([d["event_pval"] for d in raw_data])
-        event_fdrs = benjamini_hochberg(event_pvals)
-
-        # --- Pass 2: build dict records with core + extra modality columns ---
-        records = []
-        for d, event_fdr in zip(raw_data, event_fdrs):
-            atac = d["atac"]
-            rna = d["rna"]
-            rec = {
-                "event_id": d["event_id"],
-                "tf_name": d["tf_name"],
-                "peak_id": d["peak_id"],
-                "gene": d["gene"],
-                "context": d["context"],
-                "state": d["state"],
-                "state_confidence": d["state_confidence"],
-                "quality_score": d["quality"],
+                "state_assignment_score": assignment_score,
+                "state_support_pval": support_pval,
+                "state_support_qval": support_qval,
+                "supporting_modalities": supporting,
+                "neutral_modalities": neutral,
+                "conflicting_modalities": conflicting,
                 "atac_coef": atac.coef if atac else np.nan,
                 "atac_se": atac.se if atac else np.nan,
                 "atac_pval": atac.p_value if atac else 1.0,
@@ -477,30 +352,27 @@ class MoDES:
                 "rna_pval": rna.p_value if rna else 1.0,
                 "rna_fdr": rna.fdr if rna else 1.0,
                 "rna_direction": rna.direction if rna else 0,
-                "rna_after_atac_coef": d["rna_after_coef"],
-                "rna_after_atac_se": d["rna_after_se"],
-                "rna_after_atac_pval": d["rna_after_pval"],
-                "rna_after_atac_fdr": d["rna_after_fdr"],
-                "artifact_risk": d["artifact_risk"],
-                "artifact_reason": d["artifact_reason"],
-                "event_pval": d["event_pval"],
-                "event_fdr": float(event_fdr),
+                "rna_after_atac_coef": rna_after_coef,
+                "rna_after_atac_se": rna_after_se,
+                "rna_after_atac_pval": rna_after_pval,
+                "rna_after_atac_fdr": rna_after_fdr,
+                "artifact_risk": artifact_risk,
+                "artifact_reason": artifact_reason,
+                "quality_score": quality,
+                # Backward compat
+                "state_confidence": assignment_score,
+                "event_pval": support_pval,
+                "event_fdr": support_qval,
             }
-            # v2.0: append extra modality columns
-            for mod_name in extra_mod_names:
-                rec[f"{mod_name}_coef"] = d.get(f"{mod_name}_coef", np.nan)
-                rec[f"{mod_name}_se"] = d.get(f"{mod_name}_se", np.nan)
-                rec[f"{mod_name}_pval"] = d.get(f"{mod_name}_pval", 1.0)
-                rec[f"{mod_name}_fdr"] = d.get(f"{mod_name}_fdr", 1.0)
-                rec[f"{mod_name}_direction"] = d.get(f"{mod_name}_direction", 0)
             records.append(rec)
 
-        import sys
+        event_table = pd.DataFrame(records, columns=_event_result_columns())
 
+        # Params
+        import sys
         import numpy as _np
         import pandas as _pd
         import statsmodels as _sm
-
         from modes import __version__ as _modes_ver
 
         params = {
@@ -511,16 +383,8 @@ class MoDES:
             "statsmodels_version": _sm.__version__,
             "condition_col": self.condition_col,
             "contrast": str(self.contrast) if self.contrast else "auto",
-            "covariate_cols": self.covariate_cols,
-            "donor_col": self.donor_col,
-            "batch_col": self.batch_col,
             "fdr_threshold": self.fdr_threshold,
-            "allow_poisson_fallback": self.allow_poisson_fallback,
-            "allow_simplified_fallback": self.allow_simplified_fallback,
-            "cov_type": self.cov_type,
-            "conditional_mode": self.conditional_mode,
-            "min_nonzero_samples": self.min_nonzero_samples,
-            "min_total_count": self.min_total_count,
+            "use_empirical_bayes": self.use_empirical_bayes,
             "n_events": len(records),
             "n_samples": self.data.n_samples,
             "n_genes": self.data.n_genes,
@@ -530,33 +394,27 @@ class MoDES:
 
         model_diag = self._build_model_diagnostics()
 
-        columns = _event_result_columns(extra_mod_names)
         return MoDESResult(
-            event_table=pd.DataFrame(records, columns=columns),
+            event_table=event_table,
             state_probabilities=self.states.copy() if self.states is not None else None,
             layer_effects=self._build_layer_effects_df(),
             evidence_vectors=self.evidence.copy() if self.evidence is not None else None,
             model_diagnostics=model_diag,
-            modality_evidence=self.modality_evidence.copy() if self.modality_evidence is not None else None,
+            modality_evidence=self.modality_evidence.copy() if self.modality_evidence is not None and len(self.modality_evidence) > 0 else None,
             params=params,
         )
 
     def _build_layer_effects_df(self) -> pd.DataFrame:
-        """Assemble per-event layer effect estimates (v2.0: multi-modal)."""
+        """Assemble per-event layer effect estimates."""
         records = []
-        extra_mod_names = [m for m in self.effects if m not in ("rna", "atac")]
         for _, event in self.events.iterrows():
             eid = event["event_id"]
             peak = event["peak_id"]
             gene = event["gene"]
-
-            atac = self.atac_effects.get(peak)
-            rna = self.rna_effects.get(gene)
-
-            rec = {
-                "event_id": eid,
-                "peak_id": peak,
-                "gene": gene,
+            atac = self.atac_effects.get(peak) if self.atac_effects else None
+            rna = self.rna_effects.get(gene) if self.rna_effects else None
+            records.append({
+                "event_id": eid, "peak_id": peak, "gene": gene,
                 "atac_coef": atac.coef if atac else np.nan,
                 "atac_se": atac.se if atac else np.nan,
                 "atac_z": atac.z_score if atac else np.nan,
@@ -565,40 +423,11 @@ class MoDES:
                 "rna_se": rna.se if rna else np.nan,
                 "rna_z": rna.z_score if rna else np.nan,
                 "rna_fdr": rna.fdr if rna else 1.0,
-            }
-            # v2.0: append extra modality effects
-            for mod_name in extra_mod_names:
-                eff_dict = self.effects.get(mod_name, {})
-                spec = self.data.modality_specs.get(mod_name)
-                # Resolve feature
-                if spec and spec.assay == "PROTEIN":
-                    links = getattr(self.data, 'protein_gene_links', None)
-                    feat_key = None
-                    if links is not None:
-                        for _, lr in links.iterrows():
-                            if str(lr["gene"]) == gene or str(lr["gene"]) == gene.split(":")[0]:
-                                feat_key = str(lr["protein_id"])
-                                break
-                    if feat_key is None:
-                        feat_key = gene
-                elif spec and spec.feature_type == "region":
-                    feat_key = peak
-                else:
-                    feat_key = gene
-                mod_eff = eff_dict.get(feat_key)
-                if mod_eff is None:
-                    for k, v in eff_dict.items():
-                        if str(k).split("|")[0] == str(feat_key).split("|")[0]:
-                            mod_eff = v
-                            break
-                rec[f"{mod_name}_coef"] = mod_eff.coef if mod_eff else np.nan
-                rec[f"{mod_name}_z"] = mod_eff.z_score if mod_eff else np.nan
-                rec[f"{mod_name}_fdr"] = mod_eff.fdr if mod_eff else 1.0
-            records.append(rec)
+            })
         return pd.DataFrame(records)
 
     def _build_modality_evidence(self) -> pd.DataFrame:
-        """v2.0: Build long-format event × modality evidence table."""
+        """Build long-format event x modality evidence table (v2.0)."""
         rows = []
         for _, event in self.events.iterrows():
             eid = event["event_id"]
@@ -606,7 +435,7 @@ class MoDES:
             peak = event["peak_id"]
 
             # RNA evidence
-            rna_eff = self.rna_effects.get(gene)
+            rna_eff = self.rna_effects.get(gene) if self.rna_effects else None
             if rna_eff:
                 rows.append({
                     "event_id": eid, "modality": "rna", "assay": "RNA",
@@ -614,13 +443,13 @@ class MoDES:
                     "coef": rna_eff.coef, "se": rna_eff.se,
                     "pval": rna_eff.p_value, "fdr": rna_eff.fdr,
                     "direction": rna_eff.direction,
-                    "quality_score": float(rna_eff.model_summary.get("quality_score", 0.5)) if isinstance(rna_eff.model_summary, dict) else 0.5,
-                    "model_used": rna_eff.model_summary.get("model_used", "unknown") if isinstance(rna_eff.model_summary, dict) else "unknown",
+                    "quality_score": 0.5,
+                    "model_used": _model_used(rna_eff),
                     "converged": rna_eff.convergence,
                 })
 
             # ATAC evidence
-            atac_eff = self.atac_effects.get(peak)
+            atac_eff = self.atac_effects.get(peak) if self.atac_effects else None
             if atac_eff:
                 rows.append({
                     "event_id": eid, "modality": "atac", "assay": "ATAC",
@@ -628,18 +457,19 @@ class MoDES:
                     "coef": atac_eff.coef, "se": atac_eff.se,
                     "pval": atac_eff.p_value, "fdr": atac_eff.fdr,
                     "direction": atac_eff.direction,
-                    "quality_score": float(atac_eff.model_summary.get("quality_score", 0.5)) if isinstance(atac_eff.model_summary, dict) else 0.5,
-                    "model_used": atac_eff.model_summary.get("model_used", "unknown") if isinstance(atac_eff.model_summary, dict) else "unknown",
+                    "quality_score": 0.5,
+                    "model_used": _model_used(atac_eff),
                     "converged": atac_eff.convergence,
                 })
 
-            # Additional modalities from data.modalities
+            # Extra modalities
             for mod_name in self.data.modalities:
                 if mod_name in ("rna", "atac"):
                     continue
                 spec = self.data.modality_specs.get(mod_name)
                 eff_dict = self.effects.get(mod_name, {})
                 mod_eff = None
+                feature = peak
 
                 if spec and spec.assay == "PROTEIN":
                     links = getattr(self.data, 'protein_gene_links', None)
@@ -652,12 +482,6 @@ class MoDES:
                             mod_eff = eff_dict.get(str(pid))
                             if mod_eff:
                                 feature = str(pid)
-                                break
-                    if mod_eff is None:
-                        for k, v in eff_dict.items():
-                            if str(k) == str(gene).split(":")[0]:
-                                mod_eff = v
-                                feature = str(k)
                                 break
                 elif spec and spec.feature_type == "region":
                     feature = peak
@@ -677,7 +501,7 @@ class MoDES:
                         "pval": mod_eff.p_value, "fdr": mod_eff.fdr,
                         "direction": mod_eff.direction,
                         "quality_score": 0.5,
-                        "model_used": mod_eff.model_summary.get("model_used", "unknown") if isinstance(mod_eff.model_summary, dict) else "unknown",
+                        "model_used": _model_used(mod_eff),
                         "converged": mod_eff.convergence,
                     })
 
@@ -685,8 +509,8 @@ class MoDES:
         return self.modality_evidence
 
     def _build_model_diagnostics(self) -> pd.DataFrame:
-        """Collect model diagnostics from all effect estimates (v2.0: multi-modal)."""
-        def _add_modality_rows(feature_effects, modality_label):
+        """Collect model diagnostics from all effect estimates."""
+        def _add_rows(feature_effects, modality_label):
             out = []
             for feat_id, e in (feature_effects or {}).items():
                 s = e.model_summary or {}
@@ -704,32 +528,23 @@ class MoDES:
             return out
 
         rows = []
-        rows.extend(_add_modality_rows(self.atac_effects, "ATAC"))
-        rows.extend(_add_modality_rows(self.rna_effects, "RNA"))
+        rows.extend(_add_rows(self.atac_effects, "ATAC"))
+        rows.extend(_add_rows(self.rna_effects, "RNA"))
         for mod_name in self.effects:
             if mod_name in ("rna", "atac"):
                 continue
-            rows.extend(_add_modality_rows(self.effects[mod_name], mod_name.upper()))
+            rows.extend(_add_rows(self.effects[mod_name], mod_name.upper()))
         return pd.DataFrame(rows)
 
 
-class MoDESResult:
-    """
-    Container for MoDES output.
+def _model_used(eff) -> str:
+    if isinstance(eff.model_summary, dict):
+        return eff.model_summary.get("model_used", "unknown")
+    return "unknown"
 
-    Parameters
-    ----------
-    event_table : DataFrame
-        Main output with per-event effect sizes and state classifications.
-    state_probabilities : DataFrame
-        State confidence probability per event.
-    layer_effects : DataFrame
-        Per-layer effect size estimates.
-    evidence_vectors : DataFrame
-        D_e evidence vectors for all events.
-    params : dict
-        Run parameters.
-    """
+
+class MoDESResult:
+    """Container for MoDES output."""
 
     def __init__(
         self,
@@ -756,131 +571,96 @@ class MoDESResult:
         lines.append("MoDES Results Summary")
         lines.append("=" * 60)
         lines.append(f"Total events:     {len(self.event_table)}")
-        lines.append(f"Significant (FDR < 0.1): "
-                     f"{(self.event_table['atac_fdr'] < 0.1).sum()} ATAC, "
-                     f"{(self.event_table['rna_fdr'] < 0.1).sum()} RNA")
         lines.append("")
-
         state_counts = self.event_table["state"].value_counts()
         lines.append("State distribution:")
         for state, count in state_counts.items():
-            lines.append(f"  {state:20s}: {count:6d} "
+            lines.append(f"  {state:25s}: {count:6d} "
                         f"({count / len(self.event_table) * 100:5.1f}%)")
-
         n_with_tf = self.event_table["tf_name"].notna().sum()
         if n_with_tf > 0:
             lines.append(f"\nEvents with TF annotation: {n_with_tf}")
-
         return "\n".join(lines)
 
     def filter(
         self,
         state: str | None = None,
         states: list[str] | None = None,
-        min_confidence: float = 0.0,
+        min_assignment_score: float = 0.0,
         fdr_threshold: float | None = None,
-        min_atac_fdr: float | None = None,
-        min_rna_fdr: float | None = None,
         exclude_high_artifact: bool = False,
-        max_artifact_risk: str | None = None,
         max_event_fdr: float | None = None,
         min_quality_score: float | None = None,
         genes: list[str] | None = None,
         peaks: list[str] | None = None,
         context: str | None = None,
     ) -> pd.DataFrame:
-        """
-        Filter the event table.
-
-        Parameters
-        ----------
-        state : str, optional
-            Keep only events with this state.
-        states : list of str, optional
-            Keep events with any of these states.
-        min_confidence : float
-            Minimum state confidence.
-        fdr_threshold : float, optional
-            Keep events where atac_fdr < threshold OR rna_fdr < threshold.
-        exclude_high_artifact : bool
-            Exclude events with artifact_risk == "high".
-        max_artifact_risk : str, optional
-            Maximum allowed artifact risk.
-        max_event_fdr : float, optional
-            Maximum event-level FDR threshold.
-        min_quality_score : float, optional
-            Minimum quality score.
-        genes : list of str, optional
-            Keep only events for these genes.
-        peaks : list of str, optional
-            Keep only events for these peaks.
-        context : str, optional
-            Keep only events matching this context.
-
-        Returns
-        -------
-        Filtered DataFrame.
-        """
+        """Filter the event table."""
         df = self.event_table.copy()
 
         if state is not None:
             df = df[df["state"] == state]
-
         if states is not None:
             df = df[df["state"].isin(states)]
-
-        if min_confidence > 0:
-            df = df[df["state_confidence"] >= min_confidence]
-
+        if min_assignment_score > 0:
+            col = "state_assignment_score"
+            if col in df.columns:
+                df = df[df[col] >= min_assignment_score]
+        if max_event_fdr is not None and "state_support_qval" in df.columns:
+            df = df[df["state_support_qval"] <= max_event_fdr]
         if fdr_threshold is not None:
-            df = df[
-                (df["atac_fdr"] < fdr_threshold) |
-                (df["rna_fdr"] < fdr_threshold)
-            ]
-
-        if min_atac_fdr is not None:
-            df = df[df["atac_fdr"] < min_atac_fdr]
-
-        if min_rna_fdr is not None:
-            df = df[df["rna_fdr"] < min_rna_fdr]
-
-        if max_event_fdr is not None and "event_fdr" in df.columns:
-            df = df[df["event_fdr"] <= max_event_fdr]
-
+            df = df[(df["atac_fdr"] < fdr_threshold) | (df["rna_fdr"] < fdr_threshold)]
         if exclude_high_artifact and "artifact_risk" in df.columns:
             df = df[df["artifact_risk"] != "high"]
-
-        if max_artifact_risk is not None and "artifact_risk" in df.columns:
-            risk_order = {"low": 0, "medium": 1, "high": 2}
-            df = df[df["artifact_risk"].map(risk_order).fillna(0) <= risk_order.get(max_artifact_risk, 2)]
-
         if min_quality_score is not None and "quality_score" in df.columns:
             df = df[df["quality_score"] >= min_quality_score]
-
         if genes is not None:
             df = df[df["gene"].isin(genes)]
-
         if peaks is not None:
             df = df[df["peak_id"].isin(peaks)]
-
         if context is not None:
             df = df[df["context"] == context]
-
         return df.reset_index(drop=True)
 
+    def to_tsv(self, output_dir: str) -> None:
+        """Write TSV output files."""
+        os.makedirs(output_dir, exist_ok=True)
+        self.event_table.to_csv(
+            os.path.join(output_dir, "event_table.tsv"), sep="\t", index=False)
+        if self.state_probabilities is not None:
+            self.state_probabilities.to_csv(
+                os.path.join(output_dir, "event_state_confidence.tsv"),
+                sep="\t", index=False)
+        if self.layer_effects is not None:
+            self.layer_effects.to_csv(
+                os.path.join(output_dir, "event_layer_effects.tsv"),
+                sep="\t", index=False)
+        if self.evidence_vectors is not None:
+            self.evidence_vectors.to_csv(
+                os.path.join(output_dir, "event_evidence_vectors.tsv"),
+                sep="\t", index=False)
+        if self.modality_evidence is not None and len(self.modality_evidence) > 0:
+            self.modality_evidence.to_csv(
+                os.path.join(output_dir, "event_modality_evidence.tsv"),
+                sep="\t", index=False)
+        if self.model_diagnostics is not None:
+            self.model_diagnostics.to_csv(
+                os.path.join(output_dir, "model_diagnostics.tsv"),
+                sep="\t", index=False)
+        pd.DataFrame(list(self.params.items()), columns=["parameter", "value"]).to_csv(
+            os.path.join(output_dir, "run_params.tsv"), sep="\t", index=False)
+
     def save(self, output_dir: str) -> None:
-        """Save all result tables to a directory. Alias for to_tsv()."""
+        """Save all result tables. Alias for to_tsv()."""
         self.to_tsv(output_dir)
-        # Also save params as JSON
         import json
         with open(os.path.join(output_dir, "run_params.json"), "w") as f:
             json.dump(self.params, f, indent=2, default=str)
 
     @classmethod
-    def load(cls, output_dir: str) -> MoDESResult:
-        """Load results from a directory previously written by save()/to_tsv()."""
+    def load(cls, output_dir: str) -> "MoDESResult":
+        """Load results from a directory."""
         et = pd.read_csv(os.path.join(output_dir, "event_table.tsv"), sep="\t")
-        # Restore string columns that pandas may have read as float64 (e.g., "null" → NaN)
         for col in ["state", "artifact_risk", "artifact_reason", "tf_name", "context"]:
             if col in et.columns:
                 et[col] = et[col].fillna("").astype(str).replace({"nan": "", "None": ""})
@@ -903,98 +683,33 @@ class MoDESResult:
         return cls(
             event_table=et, state_probabilities=sp, layer_effects=le,
             evidence_vectors=ev, model_diagnostics=md,
-            modality_evidence=me, params=params,
-        )
-
-    def to_tsv(self, output_dir: str) -> None:
-        """Write TSV output files to output_dir."""
-        os.makedirs(output_dir, exist_ok=True)
-
-        self.event_table.to_csv(
-            os.path.join(output_dir, "event_table.tsv"),
-            sep="\t", index=False,
-        )
-
-        if self.state_probabilities is not None:
-            self.state_probabilities.to_csv(
-                os.path.join(output_dir, "event_state_confidence.tsv"),
-                sep="\t", index=False,
-            )
-
-        if self.layer_effects is not None:
-            self.layer_effects.to_csv(
-                os.path.join(output_dir, "event_layer_effects.tsv"),
-                sep="\t", index=False,
-            )
-
-        if self.evidence_vectors is not None:
-            self.evidence_vectors.to_csv(
-                os.path.join(output_dir, "event_evidence_vectors.tsv"),
-                sep="\t", index=False,
-            )
-
-        # v2.0: long-format modality evidence
-        if hasattr(self, "modality_evidence") and self.modality_evidence is not None and len(self.modality_evidence) > 0:
-            self.modality_evidence.to_csv(
-                os.path.join(output_dir, "event_modality_evidence.tsv"),
-                sep="\t", index=False,
-            )
-
-        # Write model diagnostics
-        if hasattr(self, "model_diagnostics") and self.model_diagnostics is not None:
-            self.model_diagnostics.to_csv(
-                os.path.join(output_dir, "model_diagnostics.tsv"),
-                sep="\t", index=False,
-            )
-
-        # Write params as JSON-like TSV
-        pd.DataFrame(list(self.params.items()), columns=["parameter", "value"]).to_csv(
-            os.path.join(output_dir, "run_params.tsv"),
-            sep="\t", index=False,
-        )
+            modality_evidence=me, params=params)
 
     def to_graphml(self, path: str) -> None:
-        """
-        Write event network as GraphML.
-
-        Nodes: genes, peaks, TFs.
-        Edges: peak->gene (event link), TF->peak (motif support).
-        """
+        """Write event network as GraphML."""
         try:
             import networkx as nx
         except ImportError:
             raise ImportError("networkx is required for to_graphml()")
-
         G = nx.Graph()
-
         for _, row in self.event_table.iterrows():
             gene_node = f"gene:{row['gene']}"
             peak_node = f"peak:{row['peak_id']}"
-
             if gene_node not in G:
                 G.add_node(gene_node, type="gene")
             if peak_node not in G:
                 G.add_node(peak_node, type="peak")
-
             G.add_edge(
-                gene_node, peak_node,
-                type="event",
+                gene_node, peak_node, type="event",
                 state=row["state"],
-                state_confidence=float(row.get("state_confidence", np.nan)),
+                state_assignment_score=float(row.get("state_assignment_score", np.nan)),
                 artifact_risk=str(row.get("artifact_risk", "low")),
-                artifact_reason=str(row.get("artifact_reason", "")),
-                event_pval=float(row.get("event_pval", 1.0)),
-                event_fdr=float(row.get("event_fdr", 1.0)),
-                atac_coef=row["atac_coef"],
-                rna_coef=row["rna_coef"],
             )
-
             if pd.notna(row.get("tf_name")):
                 tf_node = f"tf:{row['tf_name']}"
                 if tf_node not in G:
                     G.add_node(tf_node, type="tf")
                 G.add_edge(tf_node, peak_node, type="motif")
-
         nx.write_graphml(G, path)
 
     def to_report(self, path: str) -> None:
@@ -1008,22 +723,7 @@ def run_by_context(
     context_col: str = "context",
     min_samples_per_context: int = 4,
 ) -> pd.DataFrame:
-    """
-    Run MoDES separately for each context (e.g., cell type).
-
-    Parameters
-    ----------
-    modes : MoDES
-        Configured MoDES instance (without calling .run() yet).
-    context_col : str
-        Column in data.obs defining contexts (default: "context").
-    min_samples_per_context : int
-        Minimum samples required per context.
-
-    Returns
-    -------
-    DataFrame with all contexts' events, with context column.
-    """
+    """Run MoDES separately for each context (e.g., cell type)."""
     all_events = []
     contexts = modes.data.obs[context_col].unique()
     for ctx in contexts:

@@ -92,7 +92,7 @@ TEMPLATE = """<!DOCTYPE html>
 </table>
 
 <div class="footer">
-  MoDES v0.1.0 &mdash; Multi-Omics Discordance/Event State inference
+  MoDES &mdash; Multi-Omics Evidence Framework for Regulatory Event-State Annotation
 </div>
 </body>
 </html>"""
@@ -195,9 +195,12 @@ def generate_report(results: MoDESResult, output_path: str) -> None:
         </table>"""
 
     # Event table (top 50 by confidence)
-    top_events = results.event_table.nlargest(50, "state_confidence")
+    score_col = "state_assignment_score" if "state_assignment_score" in results.event_table.columns else "state_confidence"
+    et = results.event_table.copy()
+    et[score_col] = et[score_col].fillna(0.0)
+    top_events = et.nlargest(min(50, len(et)), score_col)
     display_cols = [
-        "event_id", "gene", "peak_id", "state", "state_confidence",
+        "event_id", "gene", "peak_id", "state", "state_assignment_score",
         "artifact_risk",
         "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
     ]

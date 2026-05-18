@@ -216,5 +216,5 @@ class TestIntegration:
         unique_states = set(result.event_table["state"])
         assert len(unique_states) >= 1, "No states found in output"
         # All states must be biological states
-        from modes.states import StateClassifier
-        assert unique_states.issubset(StateClassifier.BIOLOGICAL_STATES)
+        from modes.modalities.state_rules import ALL_STATE_NAMES
+        assert unique_states.issubset(ALL_STATE_NAMES)

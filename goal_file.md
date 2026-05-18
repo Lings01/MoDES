@@ -1,1392 +1,952 @@
-Lings，我看了当前 master 的仓库完整性。结论是：
+Lings，这份三审意见虽然很狠，但它已经把核心问题说透了：
 
-仓库已经从 MVP 原型进入“接近 1.0 工程化”的阶段，但现在不能打 1.0，因为当前最新 CI 是失败的。 GitHub Actions 最新 tests #14 对应 commit 3857c3c，状态是 Failure，并且有 lint、lower-bound、pytest 3.10/3.11/3.12 相关失败或取消记录。这个必须作为最高优先级修复。 ￼
+MoDES 现在看起来像 multi-modal software interface，但还不像 multi-modal statistical inference engine。
 
-好的一面是，你现在仓库结构已经明显完整了：根目录已有 .github/workflows、benchmarks、docs、examples、modes、notebooks、tests、CHANGELOG.md、CITATION.cff、LICENSE、MANIFEST.in、ROADMAP.md 等；docs/ 里也已经有 benchmark.md、faq.md、input_formats.md、installation.md、output_schema.md、singlecell_pseudobulk.md、statistical_model.md；benchmarks/ 里已有 simulated、semi-real、negative control、baseline comparison 四类目录；examples/ 里已有 minimal_bulk 和 singlecell_pseudobulk。 ￼
+也就是说，审稿人已经承认你做了不少东西：extra modalities 进了 effect、evidence、state 流程；版本也统一了；event_fdr 也降级成 heuristic。
+但他们现在抓的是更深的一层：
 
-下面是我建议你接下来按优先级执行的详细修改列表。
+多模态只是加进规则系统；
+统计证据没有真正多模态化；
+event_pval / event_fdr 仍然 RNA+ATAC-centric；
+conditional decomposition 仍然是 RNA after ATAC；
+spatial / dynamic 还是 helper，不是主流程；
+benchmark 仍然按规则生成、按规则识别。
 
-⸻
+如果你想保住 multi-omics 这个名字，下一步不能再只是“补功能”。你需要把 MoDES 从：
 
-0. 当前总体判断
+RNA+ATAC core + extra modality rules
 
-当前 MoDES 已经有这些优势：
+重构成：
 
-1. 核心代码模块完整：
-   data / events / effects / decompose / states / core / report / plotting / cli
-2. 测试目录完整：
-   test_cli / test_core / test_data / test_decompose / test_effects /
-   test_events / test_import / test_integration / test_states / test_utils
-3. 文档目录已经建立：
-   installation / input_formats / output_schema / statistical_model /
-   singlecell_pseudobulk / benchmark / FAQ
-4. benchmark 目录已经开始成型：
-   simulated_event_states / semi_real_spikein / negative_control /
-   baseline_comparison
-5. examples 已经覆盖：
-   minimal_bulk
-   singlecell_pseudobulk
-6. release 基础文件已有：
-   LICENSE / CITATION.cff / CHANGELOG.md / ROADMAP.md / MANIFEST.in
+modality-generic evidence engine + state grammar + state-specific evidence scoring + calibration
 
-但是现在最关键的问题是：
-
-当前 master 最新 CI 失败；
-benchmark/CI/lint 还没有稳定；
-1.0 release gate 还没过；
-spatial 仍然不是 native spatial graph；
-protein layer 还没实现；
-multi-condition / pseudotime 还没实现；
-README 和部分文档仍有“愿景大于当前能力”的地方需要压实。
-
-README 当前也仍把 MoDES-RA 定位为 v0.1.0-alpha — RNA + ATAC prototype，并明确 protein layer、spatial graph、multi-class condition、pseudotime delay 都是 planned，这个定位是准确的。 ￼
+下面是我建议的完整修复方案。
 
 ⸻
 
-P0：立刻修，阻塞 1.0
+0. 先定战略：不要再写“inference framework”，改成“evidence framework”
 
-1. 修复当前 GitHub Actions 失败
+如果你继续叫：
 
-位置：
+validated multi-omics regulatory event inference framework
 
-.github/workflows/tests.yml
-tests/
-benchmarks/
-requirements*.txt
+还会被拒。
 
-现状：
+建议主标题改成：
 
-最新 Actions run tests #14 是 Failure；summary 里显示：
-
-Status Failure
-lint exit code 1
-lower-bound exit code 1
-pytest 3.10 exit code 4
-pytest 3.11 canceled / failed
-pytest 3.12 canceled
-
-我看不到完整日志，因为 GitHub 要求登录查看 logs，但失败状态和失败 job 已经明确。 ￼
-
-要做：
-
-1. 先在本地跑：
-
-python -m pytest -q
-python -m pytest -q --cov=modes --cov-report=term-missing
-ruff check modes/ tests/
-
-2. 逐个修失败：
-
-lint 失败 → 先修 ruff
-lower-bound 失败 → 检查最低依赖版本是否真的支持当前代码
-pytest exit code 4 → 通常是 pytest 参数、collection、配置或依赖问题
-
-3. GitHub Actions 里不要同时加太多 gate。建议拆成：
-
-jobs:
-  unit-tests:
-    python 3.10 / 3.11 / 3.12
-  lint:
-    ruff only
-  lower-bound:
-    暂时允许失败，等依赖边界稳定后再设为 required
-
-4. 在 CI 稳定前，不要再追加新功能。
-
-验收标准：
-
-GitHub Actions tests #latest 全部绿色
-Python 3.10 / 3.11 / 3.12 通过
-lint 通过
-lower-bound 要么通过，要么暂时标记 continue-on-error
-
-⸻
-
-2. 修 requirements.txt / requirements-dev.txt 的真实换行格式
-
-位置：
-
-requirements.txt
-requirements-dev.txt
-
-现状：
-
-Web raw 视图显示 requirements.txt 和 requirements-dev.txt 都是 Total lines: 1。我不能排除是 GitHub/raw 显示折叠问题，但从审计角度看，这很危险；如果真实文件是一行空格分隔，pip install -r requirements.txt 很容易出问题。 ￼
-
-要做：
-
-requirements.txt 应该是：
-
-numpy>=1.21
-scipy>=1.7
-pandas>=1.3
-statsmodels>=0.13
-anndata>=0.8
-matplotlib>=3.5
-seaborn>=0.11
-networkx>=2.6
-
-requirements-dev.txt 应该是：
-
-pytest>=7.0
-pytest-cov>=4.0
-ruff>=0.5
-black>=24.0
-mypy>=1.8
-build>=1.0
-twine>=5.0
-
-如果你暂时不用 black/mypy/build/twine，可以先只保留：
-
-pytest>=7.0
-pytest-cov>=4.0
-ruff>=0.5
-
-验收标准：
-
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
-
-在 fresh venv 里能通过。
-
-⸻
-
-3. 暂时降低 CI 的 lower-bound 风险
-
-位置：
-
-.github/workflows/tests.yml
-
-问题：
-
-当前 workflow 里有 lower-bound job；Actions summary 显示 lower-bound job 失败。 ￼
-
-对于科学计算包，numpy/scipy/pandas/statsmodels/anndata 的低版本组合很容易互相不兼容。你现在还在快速开发阶段，不应该让 lower-bound 阻塞主开发。
-
-要做：
-
-先改成：
-
-lower-bound:
-  continue-on-error: true
-
-或者暂时删除 lower-bound job。
-
-等 1.0 前再做：
-
-最低支持版本测试
-最新依赖测试
-Python 版本矩阵
-
-验收标准：
-
-主 pytest + lint 必须通过；
-lower-bound 可以作为 warning，不阻塞 merge。
-
-⸻
-
-4. 修 lint 问题，建立风格基线
-
-位置：
-
-modes/
-tests/
-benchmarks/
-examples/
-
-现状：
-
-当前最新 Actions summary 显示 lint job exit code 1。 ￼
-
-要做：
-
-1. 本地跑：
-
-ruff check modes/ tests/ benchmarks/ examples/
-
-2. 先自动修：
-
-ruff check modes/ tests/ benchmarks/ examples/ --fix
-
-3. 再手动修不能自动修的部分。
-4. 新建 pyproject.toml 或 .ruff.toml：
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-[tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
-ignore = [
-  "E501",  # 如果暂时不想处理长行
-]
-
-验收标准：
-
-ruff check modes/ tests/ benchmarks/ examples/
-
-返回 0。
-
-⸻
-
-P1：1.0 前必须补齐的工程完整性
-
-5. 迁移到 pyproject.toml
-
-位置：
-
-pyproject.toml
-setup.py
-
-现状：
-
-仓库有 setup.py，但 pyproject.toml raw 打开失败或未正常存在；根目录列表没有显示 pyproject.toml。 ￼
-
-要做：
-
-新增 pyproject.toml：
-
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-[project]
-name = "modes-bio"
-version = "0.1.0-alpha"
-description = "Multi-omics discordance-guided regulatory event state inference"
-readme = "README.md"
-requires-python = ">=3.10"
-license = {text = "MIT"}
-authors = [
-  {name = "Lings"}
-]
-dependencies = [
-  "numpy>=1.21",
-  "scipy>=1.7",
-  "pandas>=1.3",
-  "statsmodels>=0.13",
-  "anndata>=0.8",
-  "matplotlib>=3.5",
-  "seaborn>=0.11",
-  "networkx>=2.6",
-]
-[project.scripts]
-modes = "modes.cli:main"
-
-setup.py 可以保留一段时间，但最终推荐由 pyproject.toml 作为主入口。
-
-验收标准：
-
-python -m build
-pip install dist/*.whl
-modes --help
-
-都通过。
-
-⸻
-
-6. CLI 与 CHANGELOG 的矛盾要修
-
-位置：
-
-modes/cli.py
-CHANGELOG.md
-README.md
-ROADMAP.md
-
-问题：
-
-仓库现在有 modes/cli.py，而且 cli.py 已经实现了 modes run 和 modes validate-input 的基本逻辑；但是 CHANGELOG.md 的 limitation 里仍写着 “No CLI interface”。这已经不一致。 ￼
-
-要做：
-
-1. CHANGELOG.md 改成：
-
-CLI interface is experimental:
-- modes run
-- modes validate-input
-
-2. ROADMAP.md 里 v0.5.0-beta - CLI interface 改成：
-
-CLI hardening and API freeze
-
-3. README 增加：
-
-modes run \
-  --rna rna_counts.tsv \
-  --atac atac_counts.tsv \
-  --metadata metadata.tsv \
-  --condition condition \
-  --external-links peak_gene_links.tsv \
-  --out output \
-  --report \
-  --network
-
-4. 给 CLI 加测试：
-
-tests/test_cli.py
-
-覆盖：
-
-modes --help
-modes run on minimal example
-modes validate-input
-missing required args
-invalid external links
-
-验收标准：
-
-modes --help
-modes validate-input --help
-modes run --help
-
-全部可用，README/CHANGELOG/ROADMAP 不冲突。
-
-⸻
-
-7. 为 validate-input 输出机器可读报告
-
-位置：
-
-modes/cli.py
-modes/data.py
-
-现状：
-
-validate-input 现在主要 print 文本，并可写一个简单 report。 ￼
-
-要做：
-
-新增：
-
-modes validate-input \
-  --rna rna.tsv \
-  --atac atac.tsv \
-  --metadata metadata.tsv \
-  --condition condition \
-  --external-links links.tsv \
-  --out validation.json
-
-输出 JSON：
-
-{
-  "ok": false,
-  "errors": [],
-  "warnings": [],
-  "n_samples": 20,
-  "n_genes": 1000,
-  "n_peaks": 5000,
-  "n_links": 10000,
-  "n_links_matched": 9500
-}
-
-验收标准：
-
-CI 里跑一次：
-
-modes validate-input ... --out validation.json
-python -c "import json; json.load(open('validation.json'))"
-
-⸻
-
-8. 增加 fresh wheel install test
-
-位置：
-
-.github/workflows/tests.yml
-
-要做：
-
-新增 job：
-
-build:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-    - run: python -m pip install --upgrade pip build twine
-    - run: python -m build
-    - run: twine check dist/*
-    - run: pip install dist/*.whl
-    - run: python -c "from modes import MoDES, MoDEData; print('ok')"
-    - run: modes --help
-
-验收标准：
-
-打包成功
-wheel 可安装
-console_scripts 可用
-
-⸻
-
-9. 明确 Python 支持范围
-
-位置：
-
-README.md
-pyproject.toml
-.github/workflows/tests.yml
-
-现状：
-
-Actions 里尝试 3.10/3.11/3.12，最新失败 run 中 3.10/3.11/3.12 有失败/取消记录。 ￼
-
-要做：
-
-如果 3.12 暂时麻烦，就先官方支持：
-
-Python 3.10 / 3.11
-
-README 写清楚：
-
-Tested on Python 3.10 and 3.11.
-Python 3.12 support is planned / experimental.
-
-等 3.12 CI 绿了再加入 official support。
-
-⸻
-
-P2：代码质量与 API 稳定性
-
-10. 统一所有输出 schema
-
-位置：
-
-modes/core.py
-docs/output_schema.md
-README.md
-tests/test_core.py
-
-要做：
-
-冻结 event_table.tsv 字段：
-
-event_id
-tf_name
-peak_id
-gene
-context
-state
-state_confidence
-artifact_risk
-artifact_reason
-event_pval
-event_fdr
-quality_score
-atac_coef
-atac_se
-atac_pval
-atac_fdr
-atac_direction
-rna_coef
-rna_se
-rna_pval
-rna_fdr
-rna_direction
-rna_after_atac_coef
-rna_after_atac_se
-rna_after_atac_pval
-rna_after_atac_fdr
-
-加测试：
-
-def test_event_table_schema_exact():
-    expected = [...]
-    assert list(result.event_table.columns) == expected
-
-验收标准：
-
-输出列顺序稳定，文档和代码完全一致。
-
-⸻
-
-11. 给 MoDESResult.filter() 增加更多组合过滤
-
-位置：
-
-modes/core.py
-tests/test_core.py
-
-建议参数：
-
-result.filter(
-    state=None,
-    states=None,
-    min_confidence=None,
-    max_event_fdr=None,
-    max_atac_fdr=None,
-    max_rna_fdr=None,
-    max_rna_after_atac_fdr=None,
-    exclude_high_artifact=False,
-    max_artifact_risk=None,
-    min_quality_score=None,
-    context=None,
-    genes=None,
-    peaks=None,
-)
-
-要做：
-
-1. state 支持单个字符串；
-2. states 支持列表；
-3. max_artifact_risk 支持：
-
-low / medium / high
-
-4. genes / peaks 支持 list。
-
-验收标准：
-
-每个过滤条件都有单元测试。
-
-⸻
-
-12. 增加 MoDESResult.save() / load()
-
-位置：
-
-modes/core.py
-
-要做：
-
-新增：
-
-result.save("output/modes_result.pkl")
-result = MoDESResult.load("output/modes_result.pkl")
+MoDES: a multi-omics evidence framework for regulatory event-state annotation
 
 或者更稳：
 
-result.to_dir("output/")
-result = MoDESResult.from_dir("output/")
+MoDES: multi-omics evidence scoring and state annotation for candidate regulatory events
 
-验收标准：
+核心是把 inference 换成：
 
-保存再读取后：
+evidence scoring
+state annotation
+candidate prioritization
 
-pd.testing.assert_frame_equal(result.event_table, loaded.event_table)
-
-⸻
-
-13. 增加运行参数完整记录
-
-位置：
-
-modes/core.py
-run_params.tsv/json
-
-要记录：
-
-MoDES version
-git commit, if available
-Python version
-numpy/pandas/statsmodels/anndata versions
-condition_col
-contrast
-fdr_threshold
-donor_col
-batch_col
-covariate_cols
-n_samples
-n_genes
-n_peaks
-n_events
-n_external_links
-n_dropped_links
-runtime_seconds
-
-验收标准：
-
-run_params.json 可追溯整次分析。
+这样你还能保留 multi-omics，但不会被要求证明完整因果统计模型。
 
 ⸻
 
-P3：数据输入层增强
+1. 最大硬伤：event_pval / event_fdr 与 extra modalities 脱节
 
-14. MoDEData.validate() 强化
+这是这轮 review 最致命的一点。
 
-位置：
+现在的问题是：
 
-modes/data.py
-tests/test_data.py
+state 由 H3K27ac / protein / spatial 触发；
+但 event_pval 仍然主要用 ATAC/RNA p-value。
 
-现状：
+这在多模态中不能接受。
 
-已有输入验证雏形，但需要产品级强化。
+必须改成 state-specific evidence p-value
 
-要检查：
+每个 state 必须声明：
 
-RNA/ATAC/metadata index 完全一致
-index 是否重复
-gene columns 是否重复
-peak columns 是否重复
-是否有 NaN
-是否有 inf
-是否有负数
-是否全 0 sample
-condition 是否存在
-condition 是否二分类
-donor_col/batch_col/covariate_cols 是否存在
-是否有过少 replicate
+这个 state 由哪些 modality 的哪些方向支持？
 
-建议返回结构：
-
-@dataclass
-class ValidationReport:
-    errors: list[str]
-    warnings: list[str]
-    summary: dict
-
-而不是只返回字符串 list。
-
-验收标准：
-
-modes validate-input 和 Python API 共用同一个 validator。
+然后 event p-value 必须来自这些支持该 state 的 modality，而不是固定 ATAC/RNA。
 
 ⸻
 
-15. 增加重复 feature name 处理策略
+1.1 新增 StateRule
 
-位置：
+新增文件：
 
-modes/data.py
-
-要做：
-
-遇到重复 gene/peak：
-
-默认报错
-可选 aggregate="sum" 合并
-可选 make_unique=True 自动重命名
-
-建议默认：
-
-raise ValueError("Duplicate gene names found")
-
-验收标准：
-
-重复 gene/peak 都有测试。
-
-⸻
-
-16. 增加 sparse matrix 支持
-
-位置：
-
-modes/data.py
-effects.py
-decompose.py
-
-问题：
-
-单细胞和空间矩阵很稀疏。当前 MoDEData 主要用 pd.DataFrame，后续大数据会内存爆。
-
-要做：
-
-第一步不要全改架构，先支持：
-
-MoDEData.from_anndata(...)
-
-内部保存：
-
-AnnData / scipy sparse
-
-或者在 pseudobulk 后再转 DataFrame。
-
-更现实的 1.0 做法：
-
-明确 v1.0 的 MoDES 统计模型使用 pseudobulk dense matrix；
-cell-level sparse matrix 只用于聚合，不用于直接 GLM。
-
-如果要支持稀疏聚合：
-
-scipy.sparse.csr_matrix groupby sum
-
-验收标准：
-
-from_pseudobulk() 输入 sparse AnnData 能聚合出 pseudobulk。
-
-⸻
-
-17. MuData 支持
-
-位置：
-
-modes/data.py
-docs/singlecell_pseudobulk.md
-
-要做：
-
-新增：
-
-MoDEData.from_mudata(
-    mdata,
-    rna_mod="rna",
-    atac_mod="atac",
-    groupby=None,
-    condition_col="condition",
-    donor_col=None,
-    batch_col=None,
-)
-
-两种模式：
-
-groupby=None → 直接读取 paired cells，不推荐做 DE
-groupby=[...] → 聚合 pseudobulk，推荐
-
-验收标准：
-
-用一个 toy MuData 测试。
-
-⸻
-
-P4：event construction 与 peak-gene links
-
-18. external links schema validator
-
-位置：
-
-modes/events.py
-tests/test_events.py
-docs/input_formats.md
-
-要做：
-
-新增：
-
-validate_external_links(links, gene_names, peak_names)
-
-检查：
-
-required columns: peak_id, gene
-optional: tf_name, source, score, distance
-peak_id 是否在 ATAC matrix 中
-gene 是否在 RNA matrix 中
-score 是否数值
-重复 peak-gene 怎么处理
-
-输出：
-
-n_links
-n_links_matched
-n_links_dropped_peak_missing
-n_links_dropped_gene_missing
-
-验收标准：
-
-不匹配链接不会静默进入结果。
-
-⸻
-
-19. event_id 稳定化
-
-位置：
-
-modes/events.py
-
-建议：
-
-现在 event ID 类似：
-
-gene_peak_source
-
-更稳定的做法：
-
-event_id = sha1(f"{peak_id}|{gene}|{tf_name or 'NA'}|{source}").hexdigest()[:12]
-
-同时输出：
-
-event_key = peak_id|gene|tf_name|source
-
-验收标准：
-
-同样输入每次生成同样 event_id。
-
-⸻
-
-20. peak-gene link source 归一化
-
-要做：
-
-如果来自：
-
-SCENIC+
-SCARlink
-ArchR
-Signac
-Cicero
-user
-promoter
-distal_250kb
-
-输出统一：
-
-link_source
-link_score
-link_distance
-
-验收标准：
-
-event_table 里能追踪 link 由谁提供。
-
-⸻
-
-P5：统计模型增强
-
-21. 明确 contrast，不要隐式按 sorted condition
-
-位置：
-
-modes/effects.py
-modes/decompose.py
-modes/core.py
-docs/statistical_model.md
-
-问题：
-
-二分类条件如果按 sorted categories，可能方向不符合用户预期。
-
-要做：
-
-新增参数：
-
-contrast=("treatment", "control")
-
-或者：
-
-reference_condition="control"
-target_condition="treatment"
-
-输出记录：
-
-coef = target vs reference
-
-验收标准：
-
-测试：
-
-control/treatment
-treatment/control
-case/healthy
-
-方向符合用户指定 contrast。
-
-⸻
-
-22. fallback 策略参数化
-
-位置：
-
-modes/effects.py
-
-要做：
-
-新增：
-
-allow_poisson_fallback=True
-allow_simplified_fallback=False
-
-默认不允许 simplified fallback 丢 covariates，除非用户明确打开。
-
-验收标准：
-
-如果完整模型失败：
-
-allow_simplified_fallback=False → 报错或返回 failed effect
-allow_simplified_fallback=True → 使用简化模型并写 warning
-
-⸻
-
-23. cis_ATAC_score 聚合模型
-
-位置：
-
-modes/decompose.py
-
-当前问题：
-
-现在 conditional decomposition 是：
-
-RNA_g ~ Condition + linked_peak_ATAC + covariates
-
-这对单个 peak-gene event 可以，但一个 gene 通常有多个 cis peaks。
-
-要做：
-
-增加 gene-level cis score：
-
-cis_ATAC_score(g) = weighted sum of all linked peaks for gene g
-
-权重：
-
-external link score
-distance decay
-uniform
-
-模型：
-
-RNA_g ~ Condition + cis_ATAC_score(g) + covariates
-
-输出：
-
-rna_after_peak_coef
-rna_after_cis_atac_coef
-cis_atac_score_method
-
-验收标准：
-
-用户可选：
-
-conditional_mode="single_peak"
-conditional_mode="cis_score"
-
-⸻
-
-24. artifact risk 增强
-
-位置：
-
-modes/states.py
-modes/data.py
-
-当前 artifact risk 主要来自 quality score 和单模态信号。要增强为：
-
-low_quality_score
-single_modality_low_quality
-low_atac_depth
-low_rna_depth
-library_size_outlier
-batch_associated
-weak_link_score
-low_group_replicates
-
-输出：
-
-artifact_risk
-artifact_reason
-depth_score
-batch_score
-link_score
-
-验收标准：
-
-每个 artifact reason 都有构造测试。
-
-⸻
-
-P6：single-cell pseudobulk 做到稳定
-
-25. from_pseudobulk() 变成正式支持
-
-位置：
-
-modes/data.py
-examples/singlecell_pseudobulk/
-docs/singlecell_pseudobulk.md
-
-要做：
-
-稳定支持：
-
-groupby=["donor", "condition", "cell_type"]
-min_cells_per_group=20
-rna_layer=None
-atac_layer=None
-
-输出 obs 增加：
-
-group_id
-donor
-condition
-cell_type
-n_cells
-rna_total_counts
-atac_total_counts
-
-验收标准：
-
-toy AnnData / sparse AnnData / group drop / missing layer 都有测试。
-
-⸻
-
-26. 多 cell type 批量运行
-
-要做：
-
-新增：
-
-run_by_context(
-    data,
-    context_col="cell_type",
-    min_samples_per_context=4,
-)
-
-输出：
-
-all_contexts_event_table.tsv
-context_summary.tsv
-
-验收标准：
-
-多个 cell type 可一键跑，不需要用户写 for-loop。
-
-⸻
-
-P7：spatial 能力边界与增强
-
-27. v1.0 先支持 spatial region-pseudobulk
-
-不要现在直接做 native spatial graph。
-
-新增：
-
-MoDEData.from_spatial_pseudobulk(
-    rna_counts,
-    atac_counts,
-    metadata,
-    region_col="region",
-    sample_col="sample",
-    condition_col="condition",
-)
+modes/modalities/state_rules.py
 
 定义：
 
-spatial support in v1.0 = region/sample-level pseudobulk, not native graph.
-
-输出：
-
-context = spatial_region
-
-验收标准：
-
-空间 region 示例跑通。
+from dataclasses import dataclass
+from typing import Optional, Sequence
+@dataclass(frozen=True)
+class RequiredEvidence:
+    modality: str
+    direction: int  # +1, -1
+    role: Optional[str] = None
+    target: Optional[str] = None
+@dataclass(frozen=True)
+class NeutralEvidence:
+    modality: str
+    role: Optional[str] = None
+@dataclass(frozen=True)
+class ForbiddenEvidence:
+    modality: str
+    direction: int
+    role: Optional[str] = None
+@dataclass(frozen=True)
+class StateRule:
+    name: str
+    required: Sequence[RequiredEvidence]
+    neutral: Sequence[NeutralEvidence] = ()
+    forbidden: Sequence[ForbiddenEvidence] = ()
+    description: str = ""
+    interpretation_strength: str = "association"  # association / hypothesis / causal_not_claimed
 
 ⸻
 
-28. native spatial graph 放到 v1.2+
+1.2 示例 state rules
 
-未来设计：
+RNA+ATAC
 
-SpatialMoDEData(
-    rna,
-    atac,
-    obs,
-    coords,
-    spatial_graph,
+CONCORDANT = StateRule(
+    name="concordant",
+    required=[
+        RequiredEvidence("atac", +1),
+        RequiredEvidence("rna", +1),
+    ],
+    description="ATAC and RNA change in the same direction.",
+)
+CHROMATIN_PRIMED = StateRule(
+    name="chromatin_primed",
+    required=[
+        RequiredEvidence("atac", +1),
+    ],
+    neutral=[
+        NeutralEvidence("rna"),
+    ],
+    description="ATAC changes while RNA does not show significant change.",
+)
+RNA_ONLY = StateRule(
+    name="rna_only",
+    required=[
+        RequiredEvidence("rna", +1),
+    ],
+    neutral=[
+        NeutralEvidence("atac"),
+    ],
 )
 
-新增状态：
+CUT&Tag activating mark
 
-spatial_region_specific
-spatial_niche_driven
-spatial_artifact_edge
+ACTIVE_MARK_CONCORDANT = StateRule(
+    name="active_mark_concordant",
+    required=[
+        RequiredEvidence("cuttag_h3k27ac", +1),
+        RequiredEvidence("rna", +1),
+    ],
+    description="Activating chromatin mark and RNA change concordantly.",
+)
+ACTIVE_MARK_PRIMED = StateRule(
+    name="active_mark_primed",
+    required=[
+        RequiredEvidence("cuttag_h3k27ac", +1),
+    ],
+    neutral=[
+        NeutralEvidence("rna"),
+    ],
+)
 
-但不要现在混进 v1.0。
+Repressive mark
 
-⸻
+DEREPRESSED = StateRule(
+    name="derepressed",
+    required=[
+        RequiredEvidence("cuttag_h3k27me3", -1),
+        RequiredEvidence("rna", +1),
+    ],
+)
 
-P8：benchmarks 完整化
+Protein
 
-29. 修当前 benchmark 与 CI 失败
-
-位置：
-
-benchmarks/
-.github/workflows/tests.yml
-
-现状：
-
-最新 commit 说明说 synthetic benchmark 100% accuracy，但 Actions 失败。 ￼
-
-要做：
-
-1. 先把 benchmark 从 CI 主测试里拆出来：
-
-unit tests: 每次跑
-benchmarks: 手动或 nightly
-
-2. benchmark 脚本加 --quick 模式：
-
-python benchmarks/simulated_event_states/run_benchmark.py --quick
-
-3. CI 只跑 quick benchmark。
-
-验收标准：
-
-unit tests 绿色
-quick benchmark 绿色
-full benchmark 可本地/手动运行
-
-⸻
-
-30. benchmark 产物标准化
-
-每个 benchmark 输出：
-
-truth.tsv
-predicted_event_table.tsv
-metrics.tsv
-confusion_matrix.tsv
-confusion_matrix.png
-runtime.tsv
-
-每个 benchmark README 写：
-
-what it tests
-expected behavior
-how to run
-how to interpret
+FULL_ACTIVATION = StateRule(
+    name="full_activation",
+    required=[
+        RequiredEvidence("atac", +1),
+        RequiredEvidence("rna", +1),
+        RequiredEvidence("protein", +1),
+    ],
+)
+PROTEIN_BUFFERED = StateRule(
+    name="protein_buffered",
+    required=[
+        RequiredEvidence("rna", +1),
+    ],
+    neutral=[
+        NeutralEvidence("protein"),
+    ],
+)
+PROTEIN_MEMORY = StateRule(
+    name="protein_memory",
+    required=[
+        RequiredEvidence("protein", +1),
+    ],
+    neutral=[
+        NeutralEvidence("rna"),
+    ],
+)
 
 ⸻
 
-31. negative control 强化
+1.3 新的 state p-value 计算
 
-要做：
+每个 state 用它自己的 required modalities 计算 p-value。
 
-负控包括：
+对 required evidence：
 
-shuffle condition labels
-shuffle peak-gene links
-shuffle ATAC sample labels
-random external links
+required modality 都要显著
 
-预期：
+则可以用 intersection test：
 
-majority null
-low false concordant rate
-event_fdr roughly controlled
+state_support_pval = max(directed_pvals_of_required_modalities)
 
-⸻
+例如：
 
-32. baseline comparison 真实可解释
+active_mark_primed:
+  required = H3K27ac ↑
+  state_support_pval = p_H3K27ac_up
+full_activation:
+  required = ATAC ↑, RNA ↑, protein ↑
+  state_support_pval = max(p_ATAC_up, p_RNA_up, p_protein_up)
+protein_memory:
+  required = protein ↑
+  state_support_pval = p_protein_up
+mark_only:
+  required = H3K27ac ↑
+  state_support_pval = p_H3K27ac_up
 
-要做：
+这样就不会出现：
 
-baseline 至少有：
+state 由 H3K27ac 触发，但 event_pval 用 ATAC p-value
 
-naive_overlap:
-  ATAC sig + RNA sig = concordant
-  ATAC only = primed
-  RNA only = rna_only
-correlation_baseline:
-  peak-gene correlation + DA/DE
-MoDES:
-  full method
-
-输出：
-
-MoDES vs naive overlap macro-F1
-per-state precision/recall
-artifact risk specificity
+这个硬伤。
 
 ⸻
 
-P9：真实数据 demo
+1.4 directed p-value
 
-33. PBMC multiome smoke test
+不要只用普通 p-value，还要看方向。
 
-位置：
+def directed_pvalue(pval: float, coef: float, expected_direction: int) -> float:
+    if expected_direction == 0:
+        return pval
+    if coef * expected_direction > 0:
+        return min(pval / 2.0, 1.0)
+    return 1.0
 
-notebooks/
-examples/
-docs/benchmark.md
-
-要做：
-
-添加：
-
-notebooks/01_pbmc_multiome_smoke_test.ipynb
-
-目的：
-
-真实 10x multiome 数据可以跑完整 pipeline
-
-不要声称发现疾病机制。
-
-输出：
-
-event_table head
-state distribution
-artifact risk distribution
-runtime
-memory
+注意这仍然不是严格单侧检验，但比方向和 p-value 脱节更合理。文档要说明这是 directional evidence score。
 
 ⸻
 
-34. biological demo
-
-选择一个有真实状态变化的数据：
-
-differentiation
-stimulation
-treatment
-time course
-
-目标：
-
-chromatin_primed events 富集 lineage TF
-concordant events 富集成熟 marker
-rna_only events 富集 stress/trans response
-
-输出：
-
-demo_event_table.tsv
-motif_enrichment.tsv
-marker_enrichment.tsv
-
-⸻
-
-P10：文档与发布
-
-35. 文档表格格式再整理
-
-README 当前在 GitHub 页面能读，但仍有一些表格在 web 解析中显示为纯文本，如 “State Pattern Biological Interpretation” 和 “Capability Status”。建议全部改成标准 Markdown table。 ￼
-
-要做：
-
-全部检查：
-
-README.md
-docs/*.md
-benchmarks/README.md
+1.5 输出字段改名
 
 把：
 
-Metric Description
-Accuracy Fraction...
+event_pval
+event_fdr
 
-改成：
+改成或新增：
 
-| Metric | Description |
-|---|---|
-| Accuracy | Fraction of events correctly classified |
+state_support_pval
+state_support_qval
+supporting_modalities
 
-⸻
+保留旧字段也可以，但不建议作为主解释。
 
-36. CITATION.cff 改成真实作者信息
+主表建议：
 
-位置：
+event_id
+state
+state_assignment_score
+state_support_pval
+state_support_qval
+supporting_modalities
+neutral_modalities
+conflicting_modalities
+artifact_risk
+artifact_reason
 
-CITATION.cff
-
-现状：
-
-作者现在是：
-
-MoDES contributors
-
-比较粗糙。 ￼
-
-要做：
-
-改成：
-
-authors:
-  - family-names: Ling
-    given-names: Rongsong
-
-如果你不想写全名，可以保持，但 1.0 建议正式化。
+这样 reviewer 第四条会被直接解决。
 
 ⸻
 
-37. README badge
+2. 第二硬伤：多模态 evidence 不应该塞进 dynamic columns
 
-加：
+reviewer 说得对：
 
-![tests](https://github.com/Lings01/MoDES/actions/workflows/tests.yml/badge.svg)
+schema frozen
+但 extra modality 又动态加列
 
-但只有在 CI 绿色后再加，否则 badge 会红。
+这会被抓。
+
+必须拆成两个表
+
+2.1 固定主表：event_table.tsv
+
+只保留固定列：
+
+event_id
+region_id
+gene
+context
+tf_name
+link_source
+link_score
+state
+state_assignment_score
+state_support_pval
+state_support_qval
+supporting_modalities
+neutral_modalities
+conflicting_modalities
+artifact_risk
+artifact_reason
+quality_score
+
+这张表永远固定。
 
 ⸻
 
-38. Release checklist
-
-新增：
-
-docs/release_checklist.md
-
-内容：
-
-[ ] CI green
-[ ] unit tests pass
-[ ] lint pass
-[ ] quick benchmarks pass
-[ ] example runs
-[ ] README updated
-[ ] CHANGELOG updated
-[ ] version bumped
-[ ] tag pushed
-
-⸻
-
-P11：1.0 后功能路线
-
-39. protein layer，v1.1
-
-新增：
-
-MoDES-RAP = RNA + ATAC + Protein
-
-新增状态：
-
-full_activation
-protein_buffered
-protein_memory
-protein_opposite
-
-新增输入：
-
-protein_counts
-protein_gene_links
+2.2 长格式证据表：event_modality_evidence.tsv
 
 新增输出：
 
-protein_coef
-protein_fdr
-protein_after_rna_coef
+event_id
+modality
+assay
+target
+feature_id
+role
+coef
+se
+pval
+fdr
+direction
+directed_pval
+quality_score
+model_used
+converged
+warning
+
+例如：
+
+E001  rna              RNA     IFIT3      IFIT3       transcript_output   1.2  ...
+E001  atac             ATAC    .          chr1:...    accessibility       0.8  ...
+E001  cuttag_h3k27ac   CUTTAG  H3K27ac    chr1:...    activating_mark     1.5  ...
+E001  protein          ADT     IFIT3      IFIT3_ADT   protein_output      0.7  ...
+
+这样你可以真正说：
+
+MoDES supports multi-omics evidence
+
+而不会污染主 schema。
 
 ⸻
 
-40. native spatial graph，v1.2
+3. 第三硬伤：StateClassifier 不能再 priority-based 返回第一个命中的 state
 
-新增：
+现在 reviewer 抓住的是：
 
-SpatialMoDEData
-coords
-spatial_graph
-region labels
-neighbor effect
-spatial autocorrelation
+先 epigenomic，再 protein，再 spatial，再 RA fallback
+priority order 决定 biological interpretation
 
-新增状态：
+这确实危险。
 
-spatial_region_specific
-spatial_niche_driven
-spatial_artifact_edge
+改成所有 states 同时打分
+
+不要：
+
+if epi:
+    return epi_state
+elif protein:
+    return protein_state
+elif spatial:
+    return spatial_state
+else:
+    return RA_state
+
+而是：
+
+candidate_states = []
+for rule in state_rules:
+    score = score_state(rule, evidence)
+    if score.is_valid:
+        candidate_states.append(score)
+best = select_best_state(candidate_states)
 
 ⸻
 
-41. multi-condition / pseudotime，v1.3
+3.1 State score 组成
 
-新增：
+每个 state 得到：
 
-contrast matrix
-multi-class condition
-time-course
-pseudotime lag
-ATAC→RNA delay
+support_pval
+support_qval
+n_required_satisfied
+n_conflicts
+quality_penalty
+missing_penalty
+assignment_score
+
+示例：
+
+assignment_score = (
+    evidence_strength
+    * quality_score
+    * conflict_penalty
+    * missing_penalty
+)
+
+其中：
+
+evidence_strength = -log10(state_support_pval)
+
+然后：
+
+best_state = highest assignment_score
+
+如果两个 state 分数接近，输出：
+
+mixed_evidence
+ambiguous
+
+而不是强行用 priority 决定。
 
 ⸻
 
-最推荐的执行顺序
+3.2 新状态：mixed_evidence
 
-你现在不要再开新功能。先按下面顺序做：
+如果同时满足：
 
-1. 修当前 CI failure
-2. 修 lint / pytest / lower-bound
-3. 确认 requirements/dev-requirements 真实多行可安装
-4. 把 CLI / CHANGELOG / ROADMAP 的矛盾修掉
-5. 加 pyproject.toml 和 build job
-6. 冻结 output schema，并加 schema exact test
-7. 强化 input validation
-8. 强化 from_pseudobulk
-9. benchmark quick/full 分离
+active_mark_concordant
+protein_buffered
+
+或者：
+
+epigenomic activating ↑
+repressive mark ↑
+RNA ↑
+
+不要强制选一个。输出：
+
+mixed_evidence
+
+并在 conflicting_modalities 中写：
+
+cuttag_h3k27ac;cuttag_h3k27me3;protein
+
+这比 priority order 更可信。
+
+⸻
+
+4. 第四硬伤：EB refinement 需要降级或重做
+
+reviewer 对 EB 的批评完全成立。短期最安全路线：
+
+4.1 默认关闭 EB
+
+use_empirical_bayes=False
+
+如果保留：
+
+use_empirical_bayes=True
+
+文档写：
+
+experimental smoothing only
+not used for main results
+
+⸻
+
+4.2 state_confidence 改名
+
+改成：
+
+state_assignment_score
+
+不要叫：
+
+confidence
+posterior
+probability
+
+代码字段可以保留向后兼容，但主输出和论文用：
+
+state_assignment_score
+
+⸻
+
+4.3 小样本不要给 1.0
+
+现在小样本 / invalid evidence 时给 state_confidence = 1.0 很危险。
+
+改成：
+
+if invalid_evidence:
+    score = np.nan
+    state = "unresolved"
+
+如果 EB 样本不足：
+
+state_assignment_score = rule_score
+
+而不是：
+
+1.0
+
+⸻
+
+4.4 做 calibration benchmark
+
+输出：
+
+confidence_bin
+mean_score
+empirical_accuracy
+calibration_gap
+
+否则不要给出概率式解释。
+
+⸻
+
+5. 第五硬伤：conditional decomposition 仍然 RNA-after-ATAC only
+
+如果要叫 multi-omics，必须把 conditional decomposition 泛化。
+
+新增 ConditionalModelSpec
+
+@dataclass
+class ConditionalModelSpec:
+    response_modality: str
+    response_feature_role: str
+    conditioning_modalities: list[str]
+    name: str
+
+示例：
+
+RNA_AFTER_ATAC = ConditionalModelSpec(
+    response_modality="rna",
+    response_feature_role="gene",
+    conditioning_modalities=["atac"],
+    name="rna_after_atac",
+)
+RNA_AFTER_ACTIVE_MARK = ConditionalModelSpec(
+    response_modality="rna",
+    response_feature_role="gene",
+    conditioning_modalities=["cuttag_h3k27ac"],
+    name="rna_after_h3k27ac",
+)
+RNA_AFTER_ATAC_AND_MARK = ConditionalModelSpec(
+    response_modality="rna",
+    response_feature_role="gene",
+    conditioning_modalities=["atac", "cuttag_h3k27ac"],
+    name="rna_after_atac_h3k27ac",
+)
+PROTEIN_AFTER_RNA = ConditionalModelSpec(
+    response_modality="protein",
+    response_feature_role="protein",
+    conditioning_modalities=["rna"],
+    name="protein_after_rna",
+)
+
+⸻
+
+输出 conditional_effects.tsv
+
+字段：
+
+event_id
+model_name
+response_modality
+conditioning_modalities
+condition_coef
+condition_pval
+condition_fdr
+attenuation
+model_used
+converged
+
+这样你可以说：
+
+MoDES supports multi-layer conditional decomposition
+
+否则就只能说 RNA-after-ATAC。
+
+⸻
+
+6. 第六硬伤：Spatial / Dynamic helper 没进主流程
+
+要么降级描述，要么真正接入。
+
+6.1 Spatial 接入方式
+
+如果 data 是 SpatialMoDEData，build_evidence() 应该自动计算：
+
+spatial_moran_i
+spatial_moran_pval
+neighbor_effect
+edge_artifact_score
+
+然后写进 event_modality_evidence.tsv：
+
+modality = spatial
+feature_id = event_id or region
+coef = neighbor_effect
+pval = spatial_pval
+role = spatial_context
+
+否则 spatial state 不应该启用。
+
+⸻
+
+6.2 Dynamic 接入方式
+
+如果用户传：
+
+time_col="pseudotime"
+
+或：
+
+contrasts=[...]
+
+主 pipeline 应该调用：
+
+dynamic effect estimation
+pseudotime lag inference
+
+并生成：
+
+dynamic evidence
+
+否则 dynamic 模块只能叫 helper。
+
+⸻
+
+7. 第七硬伤：extra modality feature matching 太弱
+
+现在字符串匹配对于 CUT&Tag 很危险。
+
+7.1 CUT&Tag region matching 必须用 interval overlap
+
+不能靠：
+
+split("|")[0] == peak_id
+
+要支持：
+
+ATAC peak chr:start-end
+CUT&Tag peak chr:start-end
+
+计算 overlap：
+
+overlap_bp / min(width1, width2)
+overlap_bp / union_width
+reciprocal overlap
+
+匹配条件：
+
+min_reciprocal_overlap=0.5
+
+输出：
+
+region_match_score
+region_match_method
+
+⸻
+
+7.2 Protein 不要 fuzzy match 默认开启
+
+protein-gene link 必须显式提供：
+
+protein_id
+gene
+
+如果要 fuzzy match，必须：
+
+allow_fuzzy_protein_match=False
+
+默认 false。
+
+否则 reviewer 会说 toy match。
+
+⸻
+
+7.3 link uncertainty 进入 score
+
+每个 event 要有：
+
+link_score
+link_source
+region_match_score
+protein_link_score
+
+state score 应该有：
+
+assignment_score *= link_score
+
+这可以回应 link uncertainty 批评。
+
+⸻
+
+8. Benchmark 必须重做，不要再按规则生成规则
+
+现在 synthetic benchmark 太同构。要补这些。
+
+8.1 Null calibration
+
+condition label shuffle
+RNA sample shuffle
+ATAC sample shuffle
+CUT&Tag sample shuffle
+random peak-gene links
+random protein-gene links
+
+指标：
+
+non_null_rate
+false_concordant_rate
+false_modality_state_rate
+state_support_qval distribution
+
+⸻
+
+8.2 Link-noise benchmark
+
+true links: 100%, 75%, 50%, 25%
+random links: 0%, 25%, 50%, 75%
+
+看：
+
+state accuracy
+false concordant
+false active_mark_concordant
+false protein state
+
+⸻
+
+8.3 Batch/donor confounding
+
+模拟：
+
+balanced design
+partially confounded batch
+fully confounded batch
+donor imbalance
+low replicate
+
+输出：
+
+false positive rate
+artifact_risk enrichment
+rank deficiency detection
+
+⸻
+
+8.4 Multi-peak / multi-mark dependency
+
+模拟：
+
+one gene with 1 peak
+one gene with 10 peaks
+one gene with 50 peaks
+multiple histone marks per region
+multiple proteins per gene
+
+看 event dependency 对 q-value 的影响。
+
+⸻
+
+8.5 Ablation
+
+至少：
+
+MoDES full
+without conditional decomposition
+without link_score weighting
+without quality/artifact flag
+without EB
+naive DE+DA overlap
+random links
+proximity-only links
+extra modality ignored
+
+⸻
+
+9. 真实数据验证必须换思路
+
+PBMC spike-in 不够。你需要至少一个真实 biological contrast。
+
+最低真实验证组合
+
+Dataset A：RNA+ATAC time / perturbation
+
+目标：
+
+chromatin_primed events 是否在后续时间点出现 RNA response
+
+验证：
+
+early primed → late RNA up
+random primed → no enrichment
+
+Dataset B：RNA+CUT&Tag 或 RNA+ATAC+CUT&Tag
+
+目标：
+
+active_mark_concordant 是否富集 H3K27ac-supported enhancer-gene links
+repressive_concordant 是否符合 H3K27me3/RNA opposite pattern
+
+Dataset C：RNA+protein
+
+目标：
+
+protein_buffered / protein_memory 是否出现在 known surface markers
+
+如果没有真实多模态数据，至少做：
+
+external ChIP/CUT&Tag overlap validation
+
+⸻
+
+10. 生物学语言必须降级
+
+这些要改：
+
+drives transcriptional activation
+complete regulatory chain activation
+TF regulator
+protein memory
+causal regulatory event
+
+改成：
+
+ATAC and RNA changes are concordant
+candidate activating mark-associated event
+candidate TF motif annotation
+protein-layer discordance
+putative regulatory association
+
+示例：
+
+原：
+
+Local chromatin opening drives transcriptional activation.
+
+改：
+
+Local chromatin accessibility and RNA abundance change concordantly under the tested contrast.
+
+原：
+
+Complete regulatory chain activation through to protein output.
+
+改：
+
+ATAC, RNA and protein layers show concordant differential signal.
+
+⸻
+
+11. 给你一个最小可接受 v2.0 修复路线
+
+如果你要继续叫 multi-omics，最小要完成这 8 个。
+
+1. 主输出拆表
+
+event_table.tsv 固定主表
+event_modality_evidence.tsv 长格式多模态证据
+conditional_effects.tsv 多模型条件分解
+
+2. StateRule grammar
+
+所有 state 都由 grammar 定义，不再 priority if-else。
+
+3. state_support_pval
+
+每个 state 的 p-value 来自触发该 state 的 required modalities。
+
+4. state_assignment_score
+
+替代 state_confidence，不叫 posterior。
+
+5. 多模态 conditional decomposition
+
+至少实现：
+
+RNA after ATAC
+RNA after H3K27ac
+RNA after ATAC+H3K27ac
+Protein after RNA
+
+6. CUT&Tag interval overlap
+
+不能字符串匹配。
+
+7. stress benchmarks
+
+必须有：
+
+null
+link-noise
+batch-confounded
+weak-effect
+ablation
+
+8. 至少一个真实 non-RNA+ATAC demo
+
+比如 RNA+CUT&Tag 或 RNA+ATAC+protein。
+
+⸻
+
+12. 如果你现在要回这位 reviewer，应该怎么说？
+
+不要说：
+
+We now support all modalities, therefore the concern is addressed.
+
+要说：
+
+We agree that the previous implementation was modality-aware but not modality-consistent. In the revised version, we restructure MoDES around a long-format event-modality evidence table, state-specific evidence rules, state-support p-values derived from the modalities that trigger each state, and modality-specific conditional decompositions. We also rename state_confidence to state_assignment_score and explicitly avoid posterior interpretation. We add null, link-noise, batch-confounded, weak-effect and ablation benchmarks, plus real multi-modal validation.
+
+这才是正面回应。
+
+⸻
+
+13. 最终判断
+
+这份三审拒稿不是坏事，它告诉你现在的 v2.0 真正缺什么。
+
+你现在的 MoDES 是 multi-modal interface，但还不是 multi-modal inference/statistical engine。
+
+要跨过去，必须做三件根本改变：
+
+1. 多模态证据长表化；
+2. state p-value 与触发 state 的 modalities 绑定；
+3. state classifier 从 priority rules 改成 grammar-based scoring。
+
+然后补：
+
+conditional decomposition 多模态化
+interval-based feature matching
+stress benchmarks
+真实非 RNA+ATAC 验证
+生物学措辞降级
+
+完成这些后，MoDES 才能比较有底气地叫：
+
+multi-omics event-state framework
+
+否则，它还是会被审稿人定位成：
+
+RNA+ATAC core plus extra modality rule extensions

@@ -1,6 +1,7 @@
-"""Tests for EvidenceBuilder and StateClassifier."""
+"""Tests for EvidenceBuilder and StateClassifier (v2.0 grammar-based)."""
 
 import pandas as pd
+import numpy as np
 import pytest
 
 from modes.states import EvidenceBuilder, StateClassifier, summarize_states
@@ -72,44 +73,36 @@ class TestStateClassifier:
         return ev_builder.build(events, atac_eff, rna_eff, cond_eff, data)
 
     def test_classify_all_states_present(self, evidence_df):
-        """All 5 states should appear in output."""
-        classifier = StateClassifier(
-            fdr_threshold=0.5,  # loose threshold to get more calls
-            use_empirical_bayes=True,
-        )
+        """Output should have new v2.0 columns."""
+        classifier = StateClassifier(fdr_threshold=0.5)
         states = classifier.classify(evidence_df)
         assert len(states) == len(evidence_df)
         assert "state" in states.columns
-        assert "state_confidence" in states.columns
-        # At least some non-null states
+        assert "state_assignment_score" in states.columns
+        assert "state_support_pval" in states.columns
         unique_states = set(states["state"])
         assert len(unique_states) >= 1
 
     def test_classify_rule_based_only(self, evidence_df):
-        classifier = StateClassifier(
-            fdr_threshold=0.1,
-            use_empirical_bayes=False,
-        )
+        classifier = StateClassifier(fdr_threshold=0.1)
         states = classifier.classify(evidence_df)
         assert len(states) == len(evidence_df)
 
-    def test_state_confidenceabilities_in_range(self, evidence_df):
-        classifier = StateClassifier(
-            fdr_threshold=0.1,
-            use_empirical_bayes=True,
-        )
+    def test_state_assignment_score_in_range(self, evidence_df):
+        classifier = StateClassifier(fdr_threshold=0.1)
         states = classifier.classify(evidence_df)
-        assert (states["state_confidence"] >= 0).all()
-        assert (states["state_confidence"] <= 1).all()
+        scores = states["state_assignment_score"].dropna()
+        assert (scores >= 0).all()
 
     def test_state_labels_valid(self, evidence_df):
-        classifier = StateClassifier(use_empirical_bayes=False)
+        classifier = StateClassifier(fdr_threshold=0.1)
         states = classifier.classify(evidence_df)
+        from modes.modalities.state_rules import ALL_STATE_NAMES
         for s in states["state"]:
-            assert s in StateClassifier.BIOLOGICAL_STATES
+            assert s in ALL_STATE_NAMES
 
     def test_summarize_states(self, evidence_df):
-        classifier = StateClassifier(use_empirical_bayes=False)
+        classifier = StateClassifier(fdr_threshold=0.1)
         states = classifier.classify(evidence_df)
         summary = summarize_states(states)
         assert "count" in summary.columns
@@ -128,13 +121,16 @@ def test_low_quality_significant_event_gets_artifact_risk():
         "rna_fdr": [1.0],
         "atac_direction": [1],
         "rna_direction": [0],
+        "atac_pval": [1e-6],
+        "rna_pval": [1.0],
+        "atac_coef": [2.0],
+        "rna_coef": [0.0],
         "quality_score": [0.05],
     })
 
     classifier = StateClassifier(
         fdr_threshold=0.1,
         quality_threshold=0.3,
-        use_empirical_bayes=False,
     )
     states = classifier.classify(evidence)
     # Low quality single-modality signal: ATAC-only is chromatin_primed
@@ -154,22 +150,23 @@ def test_artifact_risk_low_medium_high():
         "rna_fdr": [1.0, 1.0, 1.0],
         "atac_direction": [0, 0, 0],
         "rna_direction": [0, 0, 0],
+        "atac_pval": [1.0, 1.0, 1.0],
+        "rna_pval": [1.0, 1.0, 1.0],
+        "atac_coef": [0.0, 0.0, 0.0],
+        "rna_coef": [0.0, 0.0, 0.0],
         "quality_score": [0.9, 0.5, 0.1],
     })
 
-    classifier = StateClassifier(
-        quality_threshold=0.3,
-        use_empirical_bayes=False,
-    )
+    classifier = StateClassifier(quality_threshold=0.3)
     states = classifier.classify(evidence)
     assert states.loc[0, "artifact_risk"] == "low"
     assert states.loc[1, "artifact_risk"] == "medium"
-    # quality=0.1 < 0.3: low_quality_score, so medium (no single_modality since both non-sig)
+    # quality=0.1 < 0.3: borderline/low_quality_score → medium
     assert states.loc[2, "artifact_risk"] == "medium"
 
 
 def test_rule_based_core_states_exact():
-    """Direct evidence-to-state test: state rules correct without GLM noise."""
+    """Direct evidence-to-state test: grammar rules classify correctly."""
     evidence = pd.DataFrame({
         "event_id": ["e_conc", "e_primed", "e_rna", "e_null"],
         "z_atac": [5.0, 5.0, 0.1, 0.1],
@@ -179,9 +176,13 @@ def test_rule_based_core_states_exact():
         "rna_fdr": [1e-6, 1.0, 1e-6, 1.0],
         "atac_direction": [1, 1, 0, 0],
         "rna_direction": [1, 0, 1, 0],
+        "atac_pval": [1e-6, 1e-6, 1.0, 1.0],
+        "rna_pval": [1e-6, 1.0, 1e-6, 1.0],
+        "atac_coef": [2.0, 2.0, 0.0, 0.0],
+        "rna_coef": [1.5, 0.0, 1.5, 0.0],
         "quality_score": [1.0, 1.0, 1.0, 1.0],
     })
-    clf = StateClassifier(fdr_threshold=0.1, use_empirical_bayes=False)
+    clf = StateClassifier(fdr_threshold=0.1)
     states = clf.classify(evidence).set_index("event_id")
     assert states.loc["e_conc", "state"] == "concordant"
     assert states.loc["e_primed", "state"] == "chromatin_primed"

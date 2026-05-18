@@ -189,9 +189,15 @@ class EffectEstimator:
         effects = {}
         rna_ls, atac_ls = data.get_library_sizes()
         X_base = self._build_design_matrix(data)
-        # Use RNA library size for gene-like modalities, ATAC for region-like
+        # Use ATAC library size for region-like modalities, RNA for gene-like.
+        # Protein uses ATAC to avoid bias from differential RNA expression.
         spec = data.modality_specs.get(modality_name)
-        use_rna_offset = spec and spec.feature_type in ("gene", "protein")
+        if spec and spec.feature_type == "region":
+            own_ls = atac_ls
+        elif spec and spec.assay == "PROTEIN":
+            own_ls = atac_ls  # ATAC is independent of protein/RNA signals
+        else:
+            own_ls = rna_ls
 
         for feature in feature_names:
             mat = data.modalities.get(modality_name)
@@ -209,7 +215,7 @@ class EffectEstimator:
                     },
                 )
                 continue
-            offset = rna_ls if use_rna_offset else atac_ls
+            offset = own_ls
             effect = self._fit_nb_glm(y, X_base, offset=offset, feature_name=feature)
             effects[feature] = effect
 
