@@ -132,6 +132,7 @@ class EvidenceBuilder:
                 spec = data.modality_specs.get(mod_name)
                 mod_eff = None
                 if spec and spec.assay == "PROTEIN":
+                    # Protein-to-gene links must be explicitly provided.
                     links = getattr(data, 'protein_gene_links', None)
                     if links is not None and len(links) > 0:
                         matched = links[links["gene"] == gene]
@@ -141,11 +142,6 @@ class EvidenceBuilder:
                         for pid in matched["protein_id"].values:
                             mod_eff = eff_dict.get(str(pid))
                             if mod_eff:
-                                break
-                    if mod_eff is None:
-                        for k, v in eff_dict.items():
-                            if str(k) == str(gene).split(":")[0]:
-                                mod_eff = v
                                 break
                 elif spec and spec.feature_type == "region":
                     feature = peak
@@ -204,8 +200,6 @@ class StateClassifier:
         Apply EB smoothing. Default False — EB is experimental only.
     modality_specs : dict
         Modality specifications for dynamic rule selection.
-    allow_fuzzy_protein_match : bool
-        Default False. Protein-to-gene links must be explicitly provided.
     """
 
     def __init__(
@@ -214,13 +208,11 @@ class StateClassifier:
         quality_threshold: float = 0.3,
         use_empirical_bayes: bool = False,
         modality_specs: dict | None = None,
-        allow_fuzzy_protein_match: bool = False,
     ):
         self.fdr_threshold = fdr_threshold
         self.quality_threshold = quality_threshold
         self.use_empirical_bayes = use_empirical_bayes
         self.modality_specs = modality_specs or {}
-        self.allow_fuzzy_protein_match = allow_fuzzy_protein_match
         self._rules_cache: list | None = None
 
     @property
