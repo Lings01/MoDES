@@ -386,3 +386,195 @@ class ConditionalDecomposition:
             raise ValueError(msg)
 
         return X
+
+    def decompose_multi(
+        self,
+        data,
+        events: pd.DataFrame,
+        model_specs: list,
+        atac_effects: dict,
+        rna_effects: dict,
+        extra_effects: dict[str, dict] | None = None,
+    ) -> pd.DataFrame:
+        """v2.0: Multi-model conditional decomposition.
+
+        Runs conditional models per ConditionalModelSpec and returns a combined
+        DataFrame with a ``model_name`` column.
+
+        Parameters
+        ----------
+        data : MoDEData
+        events : DataFrame
+        model_specs : list of ConditionalModelSpec
+        atac_effects, rna_effects : dict
+            Core effect estimates.
+        extra_effects : dict of dict
+            Extra modality effects for conditioning (CUT&Tag, protein, etc).
+
+        Returns
+        -------
+        DataFrame with columns:
+            event_id, model_name, response_modality, conditioning_modalities,
+            condition_coef, condition_se, condition_pval, condition_fdr,
+            attenuation, converged, model_used
+        """
+        if not model_specs:
+            return pd.DataFrame(columns=[
+                "event_id", "model_name", "response_modality",
+                "conditioning_modalities", "condition_coef", "condition_se",
+                "condition_pval", "condition_fdr", "attenuation",
+                "converged", "model_used",
+            ])
+
+        all_records = []
+        rna_ls, _ = data.get_library_sizes()
+
+        for spec in model_specs:
+            records = self._run_conditional_model(
+                data, events, spec, atac_effects, rna_effects,
+                extra_effects or {}, rna_ls,
+            )
+            all_records.extend(records)
+
+        df = pd.DataFrame(all_records)
+        if not df.empty:
+            from modes.utils import benjamini_hochberg
+            pvals = df["condition_pval"].values.astype(float)
+            fdrs = benjamini_hochberg(pvals)
+            df["condition_fdr"] = fdrs
+        return df
+
+    def _run_conditional_model(
+        self, data, events, spec, atac_effects, rna_effects,
+        extra_effects, rna_offset,
+    ) -> list[dict]:
+        """Run one conditional model spec against all events."""
+        from modes._types import ConditionalModelSpec
+        records = []
+        event_to_gene = dict(zip(events["event_id"], events["gene"]))
+
+        # Build conditioning matrix for each event
+        for _, event in events.iterrows():
+            eid = event["event_id"]
+            gene = event["gene"]
+            peak = event["peak_id"]
+
+            # Response
+            if spec.response_modality == "rna":
+                response_vec = data.rna[gene].values.astype(float) if gene in data.rna.columns else None
+                response_offset = rna_offset
+                response_eff = rna_effects.get(gene)
+            elif spec.response_modality == "protein":
+                prot_mat = data.modalities.get("protein")
+                if prot_mat is None:
+                    continue
+                # Find protein feature
+                links = getattr(data, 'protein_gene_links', None)
+                prot_feat = None
+                if links is not None:
+                    for _, lr in links.iterrows():
+                        if str(lr["gene"]) == gene:
+                            prot_feat = str(lr["protein_id"])
+                            break
+                if prot_feat is None:
+                    continue
+                if prot_feat not in prot_mat.columns:
+                    continue
+                response_vec = prot_mat[prot_feat].values.astype(float)
+                response_offset = rna_offset
+                response_eff = (extra_effects.get("protein") or {}).get(prot_feat)
+            else:
+                continue
+
+            if response_vec is None:
+                continue
+
+            # Build conditioning predictors
+            cond_cols = []
+            cond_names = []
+            for cond_mod in spec.conditioning_modalities:
+                if cond_mod == "atac":
+                    if peak in data.atac.columns:
+                        cond_cols.append(data.atac[peak].values.astype(float))
+                        cond_names.append("atac_peak")
+                elif cond_mod == "rna":
+                    if gene in data.rna.columns:
+                        cond_cols.append(data.rna[gene].values.astype(float))
+                        cond_names.append("rna_gene")
+                elif cond_mod == "cuttag_activating":
+                    # Find any activating CUT&Tag mark at this peak
+                    for mod_name, mat in data.modalities.items():
+                        if mod_name in ("rna", "atac", "protein"):
+                            continue
+                        spec_m = data.modality_specs.get(mod_name)
+                        if spec_m and getattr(spec_m, 'expected_rna_direction', None) == 1:
+                            # Try to find a feature overlapping this peak
+                            for feat in mat.columns:
+                                from modes.utils import interval_overlap
+                                ov = interval_overlap(str(peak), str(feat))
+                                if ov and ov["match"]:
+                                    cond_cols.append(mat[feat].values.astype(float))
+                                    cond_names.append(feat)
+                                    break
+                            break
+
+            if not cond_cols:
+                continue
+
+            # Build design matrix and fit
+            X_base = self._build_design_matrix(data)
+            X = np.column_stack([X_base] + cond_cols)
+
+            coef, se, pval, converged, model_used = self._fit_simple_conditional(
+                response_vec, X, response_offset,
+            )
+
+            # Attenuation
+            if response_eff is not None and abs(response_eff.coef) > 1e-6:
+                attenuation = coef / response_eff.coef
+            else:
+                attenuation = np.nan
+
+            records.append({
+                "event_id": eid,
+                "model_name": spec.name,
+                "response_modality": spec.response_modality,
+                "conditioning_modalities": ";".join(spec.conditioning_modalities),
+                "condition_coef": coef,
+                "condition_se": se,
+                "condition_pval": pval,
+                "condition_fdr": 1.0,  # filled later
+                "attenuation": attenuation,
+                "converged": converged,
+                "model_used": model_used,
+            })
+
+        return records
+
+    def _fit_simple_conditional(
+        self, y: np.ndarray, X: np.ndarray, offset: np.ndarray = None,
+    ) -> tuple:
+        """Fit a simple conditional GLM and return (coef, se, pval, converged, model_used)."""
+        try:
+            import statsmodels.api as sm
+            if offset is not None:
+                offset_adj = offset - np.mean(offset)
+            else:
+                offset_adj = np.zeros(len(y))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                model = sm.GLM(
+                    endog=y, exog=X, offset=offset_adj,
+                    family=sm.families.NegativeBinomial(alpha=1.0),
+                )
+                result = model.fit(maxiter=100, disp=0)
+            converged = bool(getattr(result, "converged", False))
+            coef = result.params[1] if len(result.params) > 1 else np.nan
+            se = result.bse[1] if len(result.bse) > 1 else np.nan
+            if np.isnan(coef) or np.isnan(se) or se <= 0:
+                return (np.nan, np.nan, 1.0, False, "nb_failed")
+            z = coef / se
+            pval = 2 * scipy_stats.norm.sf(abs(z))
+            return (float(coef), float(se), float(pval), converged, "nb_conditional")
+        except Exception:
+            return (np.nan, np.nan, 1.0, False, "failed")

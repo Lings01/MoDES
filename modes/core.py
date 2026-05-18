@@ -224,6 +224,32 @@ class MoDES:
             rna_effects=self.rna_effects,
         )
         self.conditional_models["rna_after_atac"] = self.conditional_effects
+
+        # v2.0: Multi-modal conditional decomposition
+        from modes._types import (
+            ConditionalModelSpec, RNA_AFTER_H3K27AC, RNA_AFTER_ATAC_H3K27AC,
+            PROTEIN_AFTER_RNA,
+        )
+        multi_specs = []
+        # Add models for available modalities
+        for mod_name, spec in self.data.modality_specs.items():
+            if hasattr(spec, 'is_epigenomic') and spec.is_epigenomic():
+                if spec.expected_rna_direction == 1:
+                    multi_specs.append(RNA_AFTER_H3K27AC)
+                    multi_specs.append(RNA_AFTER_ATAC_H3K27AC)
+                break
+        if any(s.assay == "PROTEIN" for s in self.data.modality_specs.values()):
+            multi_specs.append(PROTEIN_AFTER_RNA)
+
+        extra_eff = {k: v for k, v in self.effects.items() if k not in ("rna", "atac")}
+        multi_df = decomposer.decompose_multi(
+            self.data, self.events, multi_specs,
+            self.atac_effects, self.rna_effects, extra_eff,
+        )
+        for model_name in multi_df["model_name"].unique() if not multi_df.empty else []:
+            sub = multi_df[multi_df["model_name"] == model_name]
+            self.conditional_models[model_name] = sub
+
         return self.conditional_effects
 
     def build_evidence(self) -> pd.DataFrame:
@@ -394,6 +420,13 @@ class MoDES:
 
         model_diag = self._build_model_diagnostics()
 
+        # Combine multi-model conditional effects
+        all_cond = []
+        for name, df in self.conditional_models.items():
+            if df is not None and not df.empty:
+                all_cond.append(df)
+        cond_combined = pd.concat(all_cond, ignore_index=True) if all_cond else pd.DataFrame()
+
         return MoDESResult(
             event_table=event_table,
             state_probabilities=self.states.copy() if self.states is not None else None,
@@ -401,6 +434,7 @@ class MoDES:
             evidence_vectors=self.evidence.copy() if self.evidence is not None else None,
             model_diagnostics=model_diag,
             modality_evidence=self.modality_evidence.copy() if self.modality_evidence is not None and len(self.modality_evidence) > 0 else None,
+            conditional_effects=cond_combined,
             params=params,
         )
 
@@ -554,6 +588,7 @@ class MoDESResult:
         evidence_vectors: pd.DataFrame | None = None,
         model_diagnostics: pd.DataFrame | None = None,
         modality_evidence: pd.DataFrame | None = None,
+        conditional_effects: pd.DataFrame | None = None,
         params: dict | None = None,
     ):
         self.event_table = event_table
@@ -562,6 +597,7 @@ class MoDESResult:
         self.evidence_vectors = evidence_vectors
         self.model_diagnostics = model_diagnostics
         self.modality_evidence = modality_evidence
+        self.conditional_effects = conditional_effects
         self.params = params or {}
 
     def summary(self) -> str:
@@ -646,6 +682,10 @@ class MoDESResult:
         if self.model_diagnostics is not None:
             self.model_diagnostics.to_csv(
                 os.path.join(output_dir, "model_diagnostics.tsv"),
+                sep="\t", index=False)
+        if self.conditional_effects is not None and len(self.conditional_effects) > 0:
+            self.conditional_effects.to_csv(
+                os.path.join(output_dir, "conditional_effects.tsv"),
                 sep="\t", index=False)
         pd.DataFrame(list(self.params.items()), columns=["parameter", "value"]).to_csv(
             os.path.join(output_dir, "run_params.tsv"), sep="\t", index=False)

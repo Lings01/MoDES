@@ -173,3 +173,66 @@ def compute_feature_quality_scores(
         )
         qualities[i] = qc["quality_score"]
     return qualities
+
+
+def parse_genomic_interval(feature_id: str) -> tuple[str, int, int] | None:
+    """Parse a genomic interval string into (chr, start, end).
+
+    Supports formats:
+      - chr1:100-200
+      - chr1:100-200|H3K27ac
+      - chr1_100_200
+
+    Returns None if not parseable.
+    """
+    import re
+    # Strip suffix after | (e.g., CUT&Tag target annotation)
+    clean = str(feature_id).split("|")[0]
+    m = re.match(r"(chr[\w]+)[:\-_](\d+)[:\-_](\d+)", clean)
+    if m:
+        return (m.group(1), int(m.group(2)), int(m.group(3)))
+    return None
+
+
+def interval_overlap(
+    region_a: str, region_b: str, min_reciprocal: float = 0.5
+) -> dict | None:
+    """Compute overlap between two genomic interval feature IDs.
+
+    Returns dict with overlap_bp, reciprocal_overlap_a, reciprocal_overlap_b,
+    min_reciprocal_overlap, and match (bool) if both are parseable intervals.
+    Returns None if either is not a genomic interval.
+    """
+    a = parse_genomic_interval(region_a)
+    b = parse_genomic_interval(region_b)
+    if a is None or b is None:
+        return None
+
+    chrom_a, start_a, end_a = a
+    chrom_b, start_b, end_b = b
+
+    if chrom_a != chrom_b:
+        return {
+            "overlap_bp": 0, "reciprocal_overlap_a": 0.0,
+            "reciprocal_overlap_b": 0.0, "min_reciprocal_overlap": 0.0,
+            "match": False, "method": "genomic_interval",
+        }
+
+    width_a = end_a - start_a
+    width_b = end_b - start_b
+    overlap_start = max(start_a, start_b)
+    overlap_end = min(end_a, end_b)
+    overlap_bp = max(0, overlap_end - overlap_start)
+
+    recip_a = overlap_bp / max(width_a, 1)
+    recip_b = overlap_bp / max(width_b, 1)
+    min_recip = min(recip_a, recip_b)
+
+    return {
+        "overlap_bp": overlap_bp,
+        "reciprocal_overlap_a": round(recip_a, 4),
+        "reciprocal_overlap_b": round(recip_b, 4),
+        "min_reciprocal_overlap": round(min_recip, 4),
+        "match": min_recip >= min_reciprocal,
+        "method": "genomic_interval",
+    }

@@ -151,11 +151,20 @@ class EvidenceBuilder:
                     feature = peak
                     mod_eff = eff_dict.get(feature)
                     if mod_eff is None:
+                        from modes.utils import interval_overlap
+                        best_ov = 0.0
                         for k, v in eff_dict.items():
-                            base = k.split("|")[0] if "|" in str(k) else str(k)
-                            if base == str(feature).split("|")[0]:
+                            ov = interval_overlap(str(feature), str(k))
+                            if ov and ov["match"] and ov["min_reciprocal_overlap"] > best_ov:
                                 mod_eff = v
-                                break
+                                best_ov = ov["min_reciprocal_overlap"]
+                        # Legacy fallback: string match
+                        if mod_eff is None:
+                            for k, v in eff_dict.items():
+                                base = k.split("|")[0] if "|" in str(k) else str(k)
+                                if base == str(feature).split("|")[0]:
+                                    mod_eff = v
+                                    break
                 else:
                     feature = gene
                     mod_eff = eff_dict.get(feature)

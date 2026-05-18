@@ -109,3 +109,45 @@ class EventResult:
     artifact_reason: str = ""
     event_pval: float = 1.0
     event_fdr: float = 1.0
+
+
+@dataclass(frozen=True)
+class ConditionalModelSpec:
+    """Specification for a conditional decomposition model.
+
+    response_modality: the modality being modeled as response
+    response_feature_role: "gene" or "protein" — how to look up features
+    conditioning_modalities: list of modalities to condition on
+    name: unique model identifier
+    """
+    response_modality: str
+    response_feature_role: str
+    conditioning_modalities: list[str]
+    name: str
+
+
+# Pre-defined multi-modal conditional model specs
+RNA_AFTER_ATAC = ConditionalModelSpec(
+    response_modality="rna",
+    response_feature_role="gene",
+    conditioning_modalities=["atac"],
+    name="rna_after_atac",
+)
+RNA_AFTER_H3K27AC = ConditionalModelSpec(
+    response_modality="rna",
+    response_feature_role="gene",
+    conditioning_modalities=["cuttag_activating"],
+    name="rna_after_h3k27ac",
+)
+RNA_AFTER_ATAC_H3K27AC = ConditionalModelSpec(
+    response_modality="rna",
+    response_feature_role="gene",
+    conditioning_modalities=["atac", "cuttag_activating"],
+    name="rna_after_atac_h3k27ac",
+)
+PROTEIN_AFTER_RNA = ConditionalModelSpec(
+    response_modality="protein",
+    response_feature_role="protein",
+    conditioning_modalities=["rna"],
+    name="protein_after_rna",
+)
