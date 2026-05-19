@@ -266,15 +266,17 @@ class StateClassifier:
     def classify(self, evidence: pd.DataFrame) -> pd.DataFrame:
         """Classify events by scoring all applicable StateRules.
 
-        Returns DataFrame with: event_id, state, state_assignment_score,
-        state_support_pval, state_support_qval, supporting_modalities,
-        neutral_modalities, conflicting_modalities, artifact_risk, artifact_reason.
+        Returns DataFrame with: event_id, state_family, state, state_assignment_score,
+        state_support_score, state_support_adjusted_score, supporting_modalities,
+        absent_modalities, conflicting_modalities, missing_modalities,
+        artifact_risk, artifact_reason.
         """
         cols = [
-            "event_id", "state", "state_assignment_score",
-            "state_support_pval", "state_support_qval",
-            "supporting_modalities", "neutral_modalities",
-            "conflicting_modalities", "artifact_risk", "artifact_reason",
+            "event_id", "state_family", "state", "state_assignment_score",
+            "state_support_score", "state_support_adjusted_score",
+            "supporting_modalities", "absent_modalities",
+            "conflicting_modalities", "missing_modalities",
+            "artifact_risk", "artifact_reason",
         ]
         if evidence.empty:
             return pd.DataFrame(columns=cols)
@@ -286,11 +288,15 @@ class StateClassifier:
 
         states_df = pd.DataFrame(results)
 
-        # BH correction on state_support_pval
+        # BH-style ranking adjustment on support scores (NOT formal FDR)
         from modes.utils import benjamini_hochberg
-        pvals = states_df["state_support_pval"].values.astype(float)
-        qvals = benjamini_hochberg(pvals)
-        states_df["state_support_qval"] = qvals
+        scores = states_df["state_support_score"].fillna(0.0).values.astype(float)
+        # Convert scores to pseudo-pvalues for BH ranking: 10^(-score)
+        pseudo_p = np.clip(10.0 ** (-scores), 1e-15, 1.0)
+        adj_pseudo_p = benjamini_hochberg(pseudo_p)
+        # Convert back to adjusted scores
+        adj_scores = -np.log10(np.clip(adj_pseudo_p, 1e-15, 1.0))
+        states_df["state_support_adjusted_score"] = adj_scores
 
         return states_df
 
@@ -301,149 +307,175 @@ class StateClassifier:
         eid = row["event_id"]
         quality = float(row.get("quality_score", 0.5))
 
-        # Invalid evidence → unresolved
         if quality <= 0 or np.isnan(quality):
-            return self._make_result(eid, "unresolved", np.nan, 1.0,
-                                     "", "", "", "low", "")
+            return self._make_result(eid, "unresolved", "unresolved", np.nan, 0.0,
+                                     "", "", "", "", "low", "")
 
-        # Score all rules
         scores = []
         for rule in self.rules:
             score = self._score_rule(rule, row, quality)
             scores.append(score)
 
-        # Filter to valid scores
         valid_scores = [s for s in scores if s["score"] > 0]
         if not valid_scores:
-            return self._make_result(eid, "unresolved", np.nan, 1.0,
-                                     "", "", "", "low", "")
+            return self._make_result(eid, "unresolved", "unresolved", np.nan, 0.0,
+                                     "", "", "", "", "low", "")
 
-        # Sort by assignment_score descending
         valid_scores.sort(key=lambda s: s["score"], reverse=True)
         best = valid_scores[0]
 
-        # Ambiguity check: second-best close to best AND different name.
-        # Ties (equal scores, equal n_satisfied) are NOT ambiguous — first in rule order wins.
         if len(valid_scores) > 1:
             second = valid_scores[1]
             close = second["score"] >= best["score"] * 0.85
-            better_specificity = second.get("n_satisfied", 0) > best.get("n_satisfied", 0)
-            if close and second["name"] != best["name"] and better_specificity:
+            better_spec = second.get("n_satisfied", 0) > best.get("n_satisfied", 0)
+            if close and second["name"] != best["name"] and better_spec:
                 return self._make_result(
-                    eid, "mixed_evidence", best["score"],
-                    best["support_pval"],
-                    best["supporting"],
-                    best["neutral"],
-                    best["conflicting"],
+                    eid, "ambiguous", "mixed_evidence", best["score"],
+                    best["support_score"], best["supporting"],
+                    best["absent"], best["conflicting"], best["missing"],
                     "low", "",
                 )
 
-        # Compute artifact risk
         art_risk, art_reason = self._compute_artifact_risk(row)
 
         return self._make_result(
-            eid, best["name"], best["score"],
-            best["support_pval"],
-            best["supporting"],
-            best["neutral"],
-            best["conflicting"],
+            eid, best.get("state_family", best["name"]), best["name"],
+            best["score"], best["support_score"],
+            best["supporting"], best["absent"],
+            best["conflicting"], best["missing"],
             art_risk, art_reason,
         )
 
     def _score_rule(self, rule, row: pd.Series, quality: float) -> dict:
         """Score one StateRule against evidence for a single event.
 
-        Returns dict with name, score, support_pval, supporting, neutral, conflicting.
-        Score of 0 means the rule is invalid (required evidence not met).
+        Returns dict with name, score, support_score, supporting, absent, neutral,
+        conflicting, missing. Score of 0 means the rule is invalid.
         """
-        from modes.modalities.state_rules import directed_pvalue
+        from modes.modalities.state_rules import directed_score
 
-        # Collect modality evidence
         ev = self._modality_evidence_map(row)
 
         n_required = len(rule.required)
         n_satisfied = 0
         n_conflicts = 0
+        n_absent_ok = 0
+        n_absent_fail = 0
+        n_missing = 0
         supporting = []
+        absent = []
         neutral = []
         conflicting = []
-        req_pvals = []
+        missing_mods = []
+        req_scores = []
 
-        # Check required evidence
+        # Check required (must be significant in correct direction)
         for req in rule.required:
-            mod_key = req.modality
-            # Map rule modality name to evidence column name
             mod_ev = self._resolve_modality_evidence(ev, req)
             sig = mod_ev["fdr"] < self.fdr_threshold if mod_ev else False
-            direction_ok = mod_ev["direction"] == req.direction if mod_ev else False
+            dir_ok = mod_ev["direction"] == req.direction if mod_ev else False
             coef = mod_ev.get("coef", 0.0) if mod_ev else 0.0
             pval = mod_ev.get("pval", 1.0) if mod_ev else 1.0
 
-            if sig and direction_ok:
+            if mod_ev is None:
+                n_missing += 1
+                missing_mods.append(req.modality)
+            elif sig and dir_ok:
                 n_satisfied += 1
-                dp = directed_pvalue(pval, coef, req.direction)
-                req_pvals.append(dp)
+                ds = directed_score(pval, coef, req.direction)
+                req_scores.append(ds)
                 supporting.append(req.modality)
-            elif sig and not direction_ok:
+            elif sig and not dir_ok:
                 n_conflicts += 1
                 conflicting.append(f"{req.modality}(dir_mismatch)")
-            else:
-                # Required but not significant
-                pass
+            # else: not sig, required not met
 
-        # Check forbidden evidence
+        # Check required_absent (must be measured but NOT significant)
+        for ra in rule.required_absent:
+            mod_ev = self._resolve_modality_evidence(ev, ra)
+            sig = mod_ev["fdr"] < self.fdr_threshold if mod_ev else False
+
+            if mod_ev is None:
+                if getattr(ra, 'require_available', True):
+                    n_missing += 1
+                    missing_mods.append(ra.modality)
+                else:
+                    n_absent_ok += 1
+                    absent.append(ra.modality)
+            elif not sig:
+                n_absent_ok += 1
+                absent.append(ra.modality)
+            else:
+                n_absent_fail += 1
+                conflicting.append(f"{ra.modality}(should_be_absent)")
+
+        # Check forbidden
         for fb in rule.forbidden:
             mod_ev = self._resolve_modality_evidence(ev, fb)
             sig = mod_ev["fdr"] < self.fdr_threshold if mod_ev else False
-            direction_ok = mod_ev["direction"] == fb.direction if mod_ev else False
-            if sig and direction_ok:
+            direction = mod_ev["direction"] if mod_ev else 0
+            dir_ok = (fb.direction is None or direction == fb.direction)
+            if sig and dir_ok:
                 n_conflicts += 1
                 conflicting.append(f"{fb.modality}(forbidden)")
 
-        # Check neutral evidence
-        for nt in rule.neutral:
-            mod_ev = self._resolve_modality_evidence(ev, nt)
+        # Check optional (bonus if present)
+        opt_bonus = 1.0
+        for opt in rule.optional:
+            mod_ev = self._resolve_modality_evidence(ev, opt)
             sig = mod_ev["fdr"] < self.fdr_threshold if mod_ev else False
-            if sig:
-                neutral.append(nt.modality)
+            dir_ok = (opt.direction is None or mod_ev["direction"] == opt.direction) if mod_ev else False
+            if sig and dir_ok:
+                opt_bonus *= (1.0 + opt.bonus)
+                supporting.append(f"{opt.modality}(optional)")
 
-        # A rule with no required evidence always matches (null-like)
-        if n_required == 0:
-            n_satisfied = 1  # dummy to pass validity check
+        # Check missing_policy
+        missing_penalty = 1.0
+        for mp in rule.missing_policy:
+            mod_ev = self._resolve_modality_evidence(ev, mp)
+            if mod_ev is None:
+                if not mp.allowed:
+                    n_missing += 1
+                    missing_mods.append(mp.modality)
+                    missing_penalty *= mp.penalty
 
-        # Rule is invalid if required evidence not satisfied
-        if n_satisfied == 0:
-            return {"name": rule.name, "score": 0, "support_pval": 1.0,
-                    "supporting": "", "neutral": "", "conflicting": ""}
+        # Validity check: all required must be satisfied AND no required_absent violations
+        if n_satisfied < n_required:
+            return {"name": rule.name, "score": 0, "support_score": 0.0,
+                    "supporting": "", "absent": "", "neutral": "",
+                    "conflicting": "", "missing": ""}
+        if n_absent_fail > 0:
+            return {"name": rule.name, "score": 0, "support_score": 0.0,
+                    "supporting": "", "absent": "", "neutral": "",
+                    "conflicting": "", "missing": ""}
 
-        # State support p-value: intersection test (max of directed p-values)
-        state_support_pval = max(req_pvals) if req_pvals else 1.0
+        # Support score: sum of directed scores for required evidence
+        support_score = sum(req_scores) if req_scores else (0.1 if n_required == 0 else 0.0)
+        support_score = min(support_score, 30.0)
 
-        # Evidence strength: sum of -log10(p) for ALL satisfied required modalities.
-        # This naturally differentiates multi-evidence states (e.g., concordant with
-        # ATAC↑ + RNA↑) from single-evidence states (chromatin_primed with ATAC↑ only).
-        evidence_strength = sum(-np.log10(max(p, 1e-15)) for p in req_pvals) if req_pvals else 0.0
-        evidence_strength = min(evidence_strength, 30.0)
-        if n_required == 0:
-            evidence_strength = max(evidence_strength, 0.1)
-
-        # Penalties
-        missing_required = n_required - n_satisfied
-        missing_penalty = 0.5 ** missing_required if missing_required > 0 else 1.0
+        # Conflict penalty
         conflict_penalty = 0.5 ** n_conflicts if n_conflicts > 0 else 1.0
 
-        # Assignment score with specificity bonus for multi-evidence states
-        specificity = 1.0 + 0.4 * max(n_satisfied - 1, 0)  # bonus per extra req
-        assignment_score = evidence_strength * quality * conflict_penalty * missing_penalty * specificity
+        # Specificity bonus for states with more required evidence
+        specificity = 1.0 + 0.3 * max(n_required - 1, 0)
+
+        # Assignment score
+        assignment_score = (support_score * quality * conflict_penalty *
+                           missing_penalty * specificity * opt_bonus)
 
         return {
             "name": rule.name,
+            "state_family": getattr(rule, 'state_family', rule.name),
             "score": float(assignment_score),
-            "support_pval": float(state_support_pval),
+            "support_score": float(support_score),
             "supporting": ";".join(supporting),
+            "absent": ";".join(absent),
             "neutral": ";".join(neutral),
             "conflicting": ";".join(conflicting),
+            "missing": ";".join(missing_mods),
             "n_satisfied": n_satisfied,
+            "n_absent_ok": n_absent_ok,
+            "n_conflicts": n_conflicts,
         }
 
     def _resolve_modality_evidence(self, ev: dict, req) -> dict | None:
@@ -558,18 +590,20 @@ class StateClassifier:
         return "medium", ";".join(reasons)
 
     @staticmethod
-    def _make_result(eid, state, score, support_pval,
-                     supporting, neutral, conflicting,
+    def _make_result(eid, state_family, state, score, support_score,
+                     supporting, absent, conflicting, missing,
                      art_risk, art_reason):
         return {
             "event_id": eid,
+            "state_family": state_family,
             "state": state,
             "state_assignment_score": float(score) if not np.isnan(score) else np.nan,
-            "state_support_pval": float(support_pval),
-            "state_support_qval": 1.0,  # filled later via BH
+            "state_support_score": float(support_score),
+            "state_support_adjusted_score": 0.0,
             "supporting_modalities": supporting,
-            "neutral_modalities": neutral,
+            "absent_modalities": absent,
             "conflicting_modalities": conflicting,
+            "missing_modalities": missing,
             "artifact_risk": art_risk,
             "artifact_reason": art_reason,
         }

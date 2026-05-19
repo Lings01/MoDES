@@ -24,9 +24,10 @@ def _event_result_columns():
     return [
         "event_id", "tf_name", "peak_id", "gene", "context",
         "link_source", "link_score",
-        "state", "state_assignment_score",
-        "state_support_pval", "state_support_qval",
-        "supporting_modalities", "neutral_modalities", "conflicting_modalities",
+        "state_family", "state", "state_assignment_score", "raw_state_assignment_score",
+        "state_support_score", "state_support_adjusted_score",
+        "supporting_modalities", "absent_modalities", "conflicting_modalities",
+        "missing_modalities",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
@@ -34,7 +35,7 @@ def _event_result_columns():
         "artifact_risk", "artifact_reason",
         "quality_score",
         # Backward compat: kept for existing consumers
-        "state_confidence", "event_pval", "event_fdr",
+        "state_confidence_deprecated", "event_pval_deprecated", "event_fdr_deprecated",
     ]
 
 
@@ -330,23 +331,27 @@ class MoDES:
             # State
             sr = state_map.get(eid)
             if sr is not None:
+                state_family = sr.get("state_family", sr["state"])
                 state = sr["state"]
                 assignment_score = sr["state_assignment_score"]
-                support_pval = sr["state_support_pval"]
-                support_qval = sr["state_support_qval"]
+                support_score = sr.get("state_support_score", 0.0)
+                support_adj = sr.get("state_support_adjusted_score", 0.0)
                 supporting = sr.get("supporting_modalities", "")
-                neutral = sr.get("neutral_modalities", "")
+                absent = sr.get("absent_modalities", "")
                 conflicting = sr.get("conflicting_modalities", "")
+                missing = sr.get("missing_modalities", "")
                 artifact_risk = sr.get("artifact_risk", "low")
                 artifact_reason = sr.get("artifact_reason", "")
             else:
+                state_family = "unresolved"
                 state = "unresolved"
                 assignment_score = np.nan
-                support_pval = 1.0
-                support_qval = 1.0
+                support_score = 0.0
+                support_adj = 0.0
                 supporting = ""
-                neutral = ""
+                absent = ""
                 conflicting = ""
+                missing = ""
                 artifact_risk = "low"
                 artifact_reason = ""
 
@@ -368,22 +373,18 @@ class MoDES:
                 "context": event.get("context", ""),
                 "link_source": link_source,
                 "link_score": link_score,
+                "state_family": state_family,
                 "state": state,
                 "state_assignment_score": adjusted_assignment,
-                "state_support_pval": support_pval,
-                "state_support_qval": support_qval,
+                "raw_state_assignment_score": assignment_score,
+                "state_support_score": support_score,
+                "state_support_adjusted_score": support_adj,
                 "supporting_modalities": supporting,
-                "neutral_modalities": neutral,
+                "absent_modalities": absent,
                 "conflicting_modalities": conflicting,
+                "missing_modalities": missing,
                 "atac_coef": atac.coef if atac else np.nan,
                 "atac_se": atac.se if atac else np.nan,
-                "state": state,
-                "state_assignment_score": assignment_score,
-                "state_support_pval": support_pval,
-                "state_support_qval": support_qval,
-                "supporting_modalities": supporting,
-                "neutral_modalities": neutral,
-                "conflicting_modalities": conflicting,
                 "atac_coef": atac.coef if atac else np.nan,
                 "atac_se": atac.se if atac else np.nan,
                 "atac_pval": atac.p_value if atac else 1.0,
@@ -401,10 +402,10 @@ class MoDES:
                 "artifact_risk": artifact_risk,
                 "artifact_reason": artifact_reason,
                 "quality_score": quality,
-                # Backward compat
-                "state_confidence": assignment_score,
-                "event_pval": support_pval,
-                "event_fdr": support_qval,
+                # Deprecated backward-compat aliases
+                "state_confidence_deprecated": assignment_score,
+                "event_pval_deprecated": np.nan,
+                "event_fdr_deprecated": np.nan,
             }
             records.append(rec)
 
@@ -659,14 +660,19 @@ class MoDESResult:
         fdr_threshold: float | None = None,
         exclude_high_artifact: bool = False,
         max_event_fdr: float | None = None,
+        max_state_support_adjusted_score: float | None = None,
         min_quality_score: float | None = None,
         genes: list[str] | None = None,
         peaks: list[str] | None = None,
         context: str | None = None,
+        state_family: str | None = None,
     ) -> pd.DataFrame:
         """Filter the event table."""
+        import warnings
         df = self.event_table.copy()
 
+        if state_family is not None and "state_family" in df.columns:
+            df = df[df["state_family"] == state_family]
         if state is not None:
             df = df[df["state"] == state]
         if states is not None:
@@ -675,8 +681,13 @@ class MoDESResult:
             col = "state_assignment_score"
             if col in df.columns:
                 df = df[df[col] >= min_assignment_score]
-        if max_event_fdr is not None and "state_support_qval" in df.columns:
-            df = df[df["state_support_qval"] <= max_event_fdr]
+        if max_event_fdr is not None:
+            warnings.warn("max_event_fdr is deprecated; use max_state_support_adjusted_score",
+                          DeprecationWarning)
+            col = "state_support_adjusted_score" if "state_support_adjusted_score" in df.columns else "event_fdr_deprecated"
+            df = df[df[col].fillna(1.0) <= max_event_fdr]
+        if max_state_support_adjusted_score is not None and "state_support_adjusted_score" in df.columns:
+            df = df[df["state_support_adjusted_score"] <= max_state_support_adjusted_score]
         if fdr_threshold is not None:
             df = df[(df["atac_fdr"] < fdr_threshold) | (df["rna_fdr"] < fdr_threshold)]
         if exclude_high_artifact and "artifact_risk" in df.columns:

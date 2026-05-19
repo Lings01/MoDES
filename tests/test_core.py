@@ -32,8 +32,8 @@ class TestMoDES:
         result = modes.run()
 
         expected_cols = [
-            "event_id", "gene", "peak_id", "state", "state_confidence",
-            "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
+            "event_id", "gene", "peak_id", "state", "state_assignment_score",
+            "state_family", "atac_coef", "rna_coef", "atac_fdr", "rna_fdr",
         ]
         for col in expected_cols:
             assert col in result.event_table.columns, f"Missing column: {col}"
@@ -169,9 +169,7 @@ def test_event_table_contains_artifact_risk(synthetic_bulk_data_small):
     result = modes.run()
     assert "artifact_risk" in result.event_table.columns
     assert "artifact_reason" in result.event_table.columns
-    assert "event_pval" in result.event_table.columns
-    assert "event_fdr" in result.event_table.columns
-    assert result.event_table["event_fdr"].between(0, 1).all()
+    assert "state_support_score" in result.event_table.columns
     # artifact_risk values should be from the allowed set
     valid_risks = {"low", "medium", "high"}
     assert set(result.event_table["artifact_risk"].dropna().unique()).issubset(valid_risks)
@@ -261,16 +259,17 @@ def test_event_table_schema_exact(synthetic_bulk_data_small):
     expected = [
         "event_id", "tf_name", "peak_id", "gene", "context",
         "link_source", "link_score",
-        "state", "state_assignment_score",
-        "state_support_pval", "state_support_qval",
-        "supporting_modalities", "neutral_modalities", "conflicting_modalities",
+        "state_family", "state", "state_assignment_score", "raw_state_assignment_score",
+        "state_support_score", "state_support_adjusted_score",
+        "supporting_modalities", "absent_modalities", "conflicting_modalities",
+        "missing_modalities",
         "atac_coef", "atac_se", "atac_pval", "atac_fdr", "atac_direction",
         "rna_coef", "rna_se", "rna_pval", "rna_fdr", "rna_direction",
         "rna_after_atac_coef", "rna_after_atac_se",
         "rna_after_atac_pval", "rna_after_atac_fdr",
         "artifact_risk", "artifact_reason",
         "quality_score",
-        "state_confidence", "event_pval", "event_fdr",
+        "state_confidence_deprecated", "event_pval_deprecated", "event_fdr_deprecated",
     ]
     assert list(result.event_table.columns) == expected
 

@@ -79,7 +79,7 @@ class TestStateClassifier:
         assert len(states) == len(evidence_df)
         assert "state" in states.columns
         assert "state_assignment_score" in states.columns
-        assert "state_support_pval" in states.columns
+        assert "state_support_score" in states.columns
         unique_states = set(states["state"])
         assert len(unique_states) >= 1
 
@@ -134,7 +134,7 @@ def test_low_quality_significant_event_gets_artifact_risk():
     )
     states = classifier.classify(evidence)
     # Low quality single-modality signal: ATAC-only is chromatin_primed
-    assert states.loc[0, "state"] == "chromatin_primed"
+    assert states.loc[0, "state"] == "chromatin_open_primed"
     assert states.loc[0, "artifact_risk"] == "high"
     assert "single_modality_low_quality" in states.loc[0, "artifact_reason"]
 
@@ -184,7 +184,7 @@ def test_rule_based_core_states_exact():
     })
     clf = StateClassifier(fdr_threshold=0.1)
     states = clf.classify(evidence).set_index("event_id")
-    assert states.loc["e_conc", "state"] == "concordant"
-    assert states.loc["e_primed", "state"] == "chromatin_primed"
-    assert states.loc["e_rna", "state"] == "rna_only"
+    assert states.loc["e_conc", "state"] == "concordant_activation"
+    assert states.loc["e_primed", "state"] == "chromatin_open_primed"
+    assert states.loc["e_rna", "state"] == "rna_up_only"
     assert states.loc["e_null", "state"] == "null"

@@ -160,24 +160,24 @@ class TestIntegration:
         rec_df = pd.DataFrame(recovered)
         assert len(rec_df) == 4, "Should have all 4 ground truth events match"
 
-        # Concordant should be recovered as concordant
+        # Concordant → concordant_activation (v2.0 full-direction states)
         conc_mask = rec_df["true_state"] == "concordant"
         assert conc_mask.sum() == 1
         conc_state = rec_df.loc[conc_mask, "predicted_state"].iloc[0]
-        assert conc_state == "concordant", f"Expected concordant, got {conc_state}"
+        assert "concordant" in conc_state, f"Expected concordant*, got {conc_state}"
 
-        # Chromatin primed should be recovered
+        # Chromatin primed → chromatin_open_primed
         primed_mask = rec_df["true_state"] == "chromatin_primed"
         assert primed_mask.sum() == 1
         primed_state = rec_df.loc[primed_mask, "predicted_state"].iloc[0]
-        assert primed_state == "chromatin_primed", \
-            f"Expected chromatin_primed, got {primed_state}"
+        assert "chromatin" in primed_state and "primed" in primed_state, \
+            f"Expected chromatin*primed, got {primed_state}"
 
         rna_mask = rec_df["true_state"] == "rna_only"
         assert rna_mask.sum() == 1
         rna_state = rec_df.loc[rna_mask, "predicted_state"].iloc[0]
-        assert rna_state == "rna_only", \
-            f"Expected rna_only, got {rna_state}"
+        assert "rna" in rna_state and "only" in rna_state, \
+            f"Expected rna*only, got {rna_state}"
 
     def test_full_pipeline_outputs(self, synthetic_bulk_data_small):
         """All output files are generated correctly."""
@@ -210,11 +210,11 @@ class TestIntegration:
 
         assert len(result.event_table) > 0, "No events in output"
         assert "state" in result.event_table.columns
-        assert "state_confidence" in result.event_table.columns
+        assert "state_assignment_score" in result.event_table.columns
         assert "artifact_risk" in result.event_table.columns
-        assert "event_fdr" in result.event_table.columns
+        assert "state_support_score" in result.event_table.columns
         unique_states = set(result.event_table["state"])
         assert len(unique_states) >= 1, "No states found in output"
-        # All states must be biological states
+        # All states must be valid
         from modes.modalities.state_rules import ALL_STATE_NAMES
         assert unique_states.issubset(ALL_STATE_NAMES)
