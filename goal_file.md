@@ -786,7 +786,7 @@ examples = 当前真实 examples
 
 ⸻
 
-18. README 降低因果措辞
+18. ✅ [DONE] README 降低因果措辞
 
 README 仍有：
 
@@ -967,7 +967,7 @@ if max_event_fdr is not None:
 
 ⸻
 
-27. state_confidence 全部标 deprecated
+27. ✅ [DONE] state_confidence 全部标 deprecated
 
 主输出可以保留，但文档写：
 
@@ -977,7 +977,7 @@ It is not a posterior probability.
 
 ⸻
 
-28. Release tag narrative 修正
+28. ✅ [DONE] Release tag narrative 修正
 
 不要再写：
 
