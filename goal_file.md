@@ -360,7 +360,7 @@ PROTEIN_MEMORY_DOWN = StateRule(
 
 ⸻
 
-6. 修 spatial evidence role 解析
+6. ✅ [DONE] 修 spatial evidence role 解析
 
 当前 spatial rules 已经写了 role，比如：
 
@@ -443,7 +443,7 @@ state_support_qval_deprecated
 
 ⸻
 
-8. 增加 calibration benchmark，否则不许说 q-value
+8. ✅ [DONE] 增加 calibration benchmark，否则不许说 q-value
 
 如果你坚持保留 qval，就必须做 calibration：
 
@@ -507,7 +507,7 @@ event_fdr_deprecated
 
 ⸻
 
-10. event_modality_evidence.tsv 成为真正多模态证据表
+10. ✅ [DONE] event_modality_evidence.tsv 成为真正多模态证据表
 
 当前 _build_modality_evidence() 已经输出 long-format rows，但 quality 分数固定很粗糙，且未包含 directed score / modality-specific QC。 ￼
 
@@ -539,7 +539,7 @@ warning
 
 ⸻
 
-11. conditional_effects.tsv 必须明确是 diagnostic，除非进入 state score
+11. ✅ [DONE] conditional_effects.tsv 必须明确是 diagnostic，除非进入 state score
 
 当前 decompose() 已经尝试加入 RNA_AFTER_H3K27AC、RNA_AFTER_ATAC_H3K27AC、PROTEIN_AFTER_RNA 等模型，但这些 conditional results 没有真正参与 state scoring。 ￼
 
@@ -596,7 +596,7 @@ CLR or protein-specific library-size offset
 
 ⸻
 
-13. CUT&Tag / CUT&RUN / ChIP 需要 interval overlap matching
+13. ✅ [DONE] CUT&Tag / CUT&RUN / ChIP 需要 interval overlap matching
 
 当前 extra modality evidence 中 region-like modality 基本用 peak 作为 feature key；如果 CUT&Tag peak 和 ATAC peak 名不一致，就很难匹配。_build_modality_evidence() 对 region-like extra modality 使用 feature = peak 并直接 eff_dict.get(feature)。 ￼
 
@@ -631,7 +631,7 @@ region_match_score
 
 ⸻
 
-七、P0 级：artifact risk 必须多模态化
+七、✅ [DONE] P0 级：artifact risk 必须多模态化
 
 当前 _compute_artifact_risk() 主要看：
 
@@ -814,7 +814,7 @@ TF driver
 
 九、P1 级：真实验证和 benchmark
 
-19. 增加 null calibration benchmark
+19. ✅ [DONE] 增加 null calibration benchmark
 
 必须包括：
 
@@ -835,7 +835,7 @@ artifact_risk_distribution
 
 ⸻
 
-20. 增加 weak-effect benchmark
+20. ✅ [DONE] 增加 weak-effect benchmark
 
 设置：
 
@@ -850,7 +850,7 @@ state_assignment_score calibration
 
 ⸻
 
-21. 增加 link-noise benchmark
+21. ✅ [DONE] 增加 link-noise benchmark
 
 设置：
 
@@ -865,7 +865,7 @@ effect of link_score
 
 ⸻
 
-22. 增加 batch/donor confounding benchmark
+22. ✅ [DONE] 增加 batch/donor confounding benchmark
 
 模拟：
 
@@ -883,7 +883,7 @@ rank-deficiency detection
 
 ⸻
 
-23. 增加 ablation benchmark
+23. ✅ [DONE] 增加 ablation benchmark
 
 对比：
 
@@ -906,7 +906,7 @@ runtime
 
 ⸻
 
-24. 增加真实 biological contrast
+24. ✅ [DONE] 增加真实 biological contrast
 
 PBMC spike-in 和 random pseudo-condition 不够。必须至少一个真实 contrast：
 

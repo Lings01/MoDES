@@ -479,55 +479,63 @@ class StateClassifier:
         }
 
     def _resolve_modality_evidence(self, ev: dict, req) -> dict | None:
-        """Map a rule modality name to actual evidence columns.
+        """Map a rule modality name + optional role/target to evidence.
 
         The rule uses abstract modality names (e.g., 'atac', 'rna', 'protein',
-        'cuttag_activating', 'cuttag_repressive', 'spatial'). This method
-        resolves them to the actual column prefixes in the evidence DataFrame.
+        'cuttag_activating', 'cuttag_repressive', 'spatial') with optional
+        role and target constraints. This method resolves to actual evidence
+        by matching modality type, assay, role, and target.
         """
         mod_name = req.modality
+        req_role = getattr(req, 'role', None)
+        req_target = getattr(req, 'target', None)
 
-        # Direct match: atac, rna are always present
+        # Direct match for core modalities
         if mod_name in ("atac", "rna"):
-            return ev.get(mod_name)
+            val = ev.get(mod_name)
+            if val and req_role:
+                spec = self.modality_specs.get(mod_name)
+                if spec and getattr(spec, 'regulatory_role', None) != req_role:
+                    return None
+            return val
 
-        # Protein: match any modality with assay == "PROTEIN"
-        if mod_name == "protein":
-            for key, val in ev.items():
-                if key not in ("atac", "rna"):
-                    spec = self.modality_specs.get(key)
-                    if spec and spec.assay == "PROTEIN":
-                        return val
-            return None
+        # Iterate extra modalities matching assay + optional role + optional target
+        for key, val in ev.items():
+            if key in ("atac", "rna"):
+                continue
+            spec = self.modality_specs.get(key)
+            if spec is None:
+                continue
 
-        # CUT&Tag activating: match modalities with expected_rna_direction == 1
-        if mod_name == "cuttag_activating":
-            for key, val in ev.items():
-                if key not in ("atac", "rna", "protein"):
-                    spec = self.modality_specs.get(key)
-                    if spec and getattr(spec, 'expected_rna_direction', None) == 1:
-                        return val
-            return None
+            # Match by modality type
+            if mod_name == "protein":
+                if spec.assay != "PROTEIN":
+                    continue
+            elif mod_name == "cuttag_activating":
+                if not (spec.assay == "CUTTAG" and getattr(spec, 'expected_rna_direction', None) == 1):
+                    continue
+            elif mod_name == "cuttag_repressive":
+                if not (spec.assay == "CUTTAG" and getattr(spec, 'expected_rna_direction', None) == -1):
+                    continue
+            elif mod_name == "spatial":
+                if spec.assay != "SPATIAL":
+                    continue
+                # v2.0: spatial evidence with role matching
+                if req_role and getattr(spec, 'regulatory_role', None) != req_role:
+                    continue
+            elif key != mod_name:
+                continue
 
-        # CUT&Tag repressive: match modalities with expected_rna_direction == -1
-        if mod_name == "cuttag_repressive":
-            for key, val in ev.items():
-                if key not in ("atac", "rna", "protein"):
-                    spec = self.modality_specs.get(key)
-                    if spec and getattr(spec, 'expected_rna_direction', None) == -1:
-                        return val
-            return None
+            # Match by optional role
+            if req_role and getattr(spec, 'regulatory_role', None) != req_role:
+                continue
+            # Match by optional target
+            if req_target and getattr(spec, 'target', None) != req_target:
+                continue
 
-        # Spatial: match modalities with assay == "SPATIAL"
-        if mod_name == "spatial":
-            for key, val in ev.items():
-                spec = self.modality_specs.get(key)
-                if spec and spec.assay == "SPATIAL":
-                    return val
-            return None
+            return val
 
-        # Exact modality name match (fallback)
-        return ev.get(mod_name)
+        return None
 
     def _modality_evidence_map(self, row: pd.Series) -> dict:
         """Extract modality evidence from a row into a lookup dict.
@@ -564,7 +572,10 @@ class StateClassifier:
         return ev
 
     def _compute_artifact_risk(self, row: pd.Series) -> tuple:
-        """Compute artifact risk level and reason."""
+        """Compute artifact risk level and reason (v2.0: multi-modal).
+
+        Checks RNA/ATAC core + extra modality diagnostics.
+        """
         reasons = []
         qs = float(row.get("quality_score", 1.0))
         atac_sig = float(row.get("atac_fdr", 1.0)) < self.fdr_threshold
@@ -572,16 +583,37 @@ class StateClassifier:
         z_atac = abs(float(row.get("z_atac", 0.0)))
         z_rna = abs(float(row.get("z_rna", 0.0)))
 
+        # Quality-based
         if qs < self.quality_threshold:
             reasons.append("low_quality_score")
         elif qs < self.quality_threshold * 2:
             reasons.append("borderline_quality")
+
+        # RNA/ATAC depth
         if z_atac < 0.5 and atac_sig:
             reasons.append("low_atac_depth")
         if z_rna < 0.5 and rna_sig:
             reasons.append("low_rna_depth")
+
+        # Single-modality with low quality
         if qs < self.quality_threshold * 2 and (atac_sig ^ rna_sig):
             reasons.append("single_modality_low_quality")
+
+        # v2.0: Check extra modalities for depth/detection issues
+        extra_mods = set()
+        for col in row.index:
+            if col.endswith("_z") and col not in ("z_atac", "z_rna", "z_rna_given_atac"):
+                extra_mods.add(col[:-2])
+        for mod_name in extra_mods:
+            mod_fdr = float(row.get(f"{mod_name}_fdr", 1.0))
+            mod_z = abs(float(row.get(f"{mod_name}_z", 0.0)))
+            mod_sig = mod_fdr < self.fdr_threshold
+            if mod_z < 0.5 and mod_sig:
+                reasons.append(f"low_{mod_name}_depth")
+            # Check region match score
+            rms = float(row.get(f"{mod_name}_region_match_score", 1.0))
+            if rms < 0.5 and mod_sig:
+                reasons.append(f"weak_{mod_name}_region_match")
 
         if not reasons:
             return "low", ""

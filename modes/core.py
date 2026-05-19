@@ -478,37 +478,60 @@ class MoDES:
         return pd.DataFrame(records)
 
     def _build_modality_evidence(self) -> pd.DataFrame:
-        """Build long-format event x modality evidence table (v2.0)."""
+        """Build long-format event x modality evidence table (v2.0).
+
+        Each row includes directed_score and per-modality quality components
+        (detection_score, depth_score, batch_score).
+        """
+        from modes.utils import compute_quality_score, interval_overlap
+        from modes.modalities.state_rules import directed_score
+
         rows = []
+        bc = self.batch_col_quality or self.batch_col
+        batch_labels = self.data.obs[bc].values if bc in self.data.obs.columns else None
+
         for _, event in self.events.iterrows():
             eid = event["event_id"]
             gene = event["gene"]
             peak = event["peak_id"]
 
+            def _qc_scores(counts):
+                qc = compute_quality_score(counts, batch_labels)
+                return (qc.get("detection_score", 0.5),
+                        qc.get("depth_score", 0.5),
+                        qc.get("batch_score", 1.0),
+                        qc.get("quality_score", 0.5))
+
             # RNA evidence
             rna_eff = self.rna_effects.get(gene) if self.rna_effects else None
-            if rna_eff:
+            if rna_eff and gene in self.data.rna.columns:
+                det, dep, bat, qs = _qc_scores(self.data.rna[gene].values)
+                ds = directed_score(rna_eff.p_value, rna_eff.coef, rna_eff.direction)
                 rows.append({
                     "event_id": eid, "modality": "rna", "assay": "RNA",
                     "target": None, "feature_id": gene, "role": "transcript_output",
                     "coef": rna_eff.coef, "se": rna_eff.se,
                     "pval": rna_eff.p_value, "fdr": rna_eff.fdr,
-                    "direction": rna_eff.direction,
-                    "quality_score": 0.5,
+                    "direction": rna_eff.direction, "directed_score": ds,
+                    "quality_score": qs, "detection_score": det,
+                    "depth_score": dep, "batch_score": bat,
                     "model_used": _model_used(rna_eff),
                     "converged": rna_eff.convergence,
                 })
 
             # ATAC evidence
             atac_eff = self.atac_effects.get(peak) if self.atac_effects else None
-            if atac_eff:
+            if atac_eff and peak in self.data.atac.columns:
+                det, dep, bat, qs = _qc_scores(self.data.atac[peak].values)
+                ds = directed_score(atac_eff.p_value, atac_eff.coef, atac_eff.direction)
                 rows.append({
                     "event_id": eid, "modality": "atac", "assay": "ATAC",
                     "target": None, "feature_id": peak, "role": "chromatin_accessibility",
                     "coef": atac_eff.coef, "se": atac_eff.se,
                     "pval": atac_eff.p_value, "fdr": atac_eff.fdr,
-                    "direction": atac_eff.direction,
-                    "quality_score": 0.5,
+                    "direction": atac_eff.direction, "directed_score": ds,
+                    "quality_score": qs, "detection_score": det,
+                    "depth_score": dep, "batch_score": bat,
                     "model_used": _model_used(atac_eff),
                     "converged": atac_eff.convergence,
                 })
@@ -521,6 +544,7 @@ class MoDES:
                 eff_dict = self.effects.get(mod_name, {})
                 mod_eff = None
                 feature = peak
+                region_match = 1.0
 
                 if spec and spec.assay == "PROTEIN":
                     links = getattr(self.data, 'protein_gene_links', None)
@@ -537,11 +561,29 @@ class MoDES:
                 elif spec and spec.feature_type == "region":
                     feature = peak
                     mod_eff = eff_dict.get(feature)
+                    # Compute region_match_score via interval overlap
+                    if mod_eff is None:
+                        best_ov = 0.0
+                        for k, v in eff_dict.items():
+                            ov = interval_overlap(str(peak), str(k))
+                            if ov and ov["min_reciprocal_overlap"] > best_ov:
+                                mod_eff = v
+                                region_match = ov["min_reciprocal_overlap"]
+                                best_ov = ov["min_reciprocal_overlap"]
+                    else:
+                        ov = interval_overlap(str(peak), str(feature))
+                        if ov:
+                            region_match = ov["min_reciprocal_overlap"]
                 else:
                     feature = gene
                     mod_eff = eff_dict.get(feature)
 
-                if mod_eff:
+                if mod_eff and np.isfinite(mod_eff.coef):
+                    mat = self.data.modalities.get(mod_name)
+                    det, dep, bat, qs = (0.5, 0.5, 1.0, 0.5)
+                    if mat is not None and feature in mat.columns:
+                        det, dep, bat, qs = _qc_scores(mat[feature].values)
+                    ds = directed_score(mod_eff.p_value, mod_eff.coef, mod_eff.direction)
                     rows.append({
                         "event_id": eid, "modality": mod_name,
                         "assay": spec.assay if spec else "unknown",
@@ -550,8 +592,10 @@ class MoDES:
                         "role": spec.regulatory_role if spec else "unknown",
                         "coef": mod_eff.coef, "se": mod_eff.se,
                         "pval": mod_eff.p_value, "fdr": mod_eff.fdr,
-                        "direction": mod_eff.direction,
-                        "quality_score": 0.5,
+                        "direction": mod_eff.direction, "directed_score": ds,
+                        "quality_score": qs, "detection_score": det,
+                        "depth_score": dep, "batch_score": bat,
+                        "region_match_score": region_match,
                         "model_used": _model_used(mod_eff),
                         "converged": mod_eff.convergence,
                     })
