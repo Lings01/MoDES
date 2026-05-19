@@ -195,7 +195,13 @@ class EffectEstimator:
         if spec and spec.feature_type == "region":
             own_ls = atac_ls
         elif spec and spec.assay == "PROTEIN":
-            own_ls = atac_ls  # ATAC is independent of protein/RNA signals
+            mat = data.modalities.get(modality_name)
+            if mat is not None:
+                protein_lib = np.log(np.maximum(mat.sum(axis=1).values, 1.0))
+                protein_lib = np.nan_to_num(protein_lib, nan=np.nanmedian(protein_lib))
+                own_ls = protein_lib
+            else:
+                own_ls = atac_ls  # fallback
         else:
             own_ls = rna_ls
 

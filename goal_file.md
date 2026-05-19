@@ -545,7 +545,7 @@ warning
 
 你有两个选择：
 
-选择 A：明确降级为 diagnostic
+选择 A：[DONE] 明确降级为 diagnostic
 
 文档写：
 
@@ -570,7 +570,7 @@ attenuation_score
 
 六、P0 级：模态特异建模问题
 
-12. Protein 不能用 ATAC library size 作为 offset
+12. ✅ [DONE] Protein 不能用 ATAC library size 作为 offset
 
 estimate_modality_effects() 里当前逻辑写着 protein 使用 ATAC library size，注释是避免 RNA expression bias。代码如下：spec.assay == "PROTEIN" 时 own_ls = atac_ls。 ￼
 
@@ -933,7 +933,7 @@ known ADT marker behavior
 
 十、P2 级：工程 API 与兼容性
 
-25. 移除或降级旧字段推荐
+25. ✅ [DONE] 移除或降级旧字段推荐
 
 当前 README 仍推荐：
 
@@ -952,7 +952,7 @@ state_confidence/event_fdr are deprecated compatibility aliases.
 
 ⸻
 
-26. filter() API 改名
+26. ✅ [DONE] filter() API 改名
 
 当前 filter() 里仍有 max_event_fdr，但实际用的是 state_support_qval。 ￼
 
