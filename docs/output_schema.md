@@ -1,97 +1,120 @@
 # Output Schema
 
-MoDES v2.0.0 produces TSV files, an optional GraphML network, and an optional HTML report.
+MoDES v2.0.0 produces a fixed-schema event table, a long-format modality evidence
+table, conditional effects, model diagnostics, and run parameters.
 
-The `event_table.tsv` schema is **frozen** for the v2.0 release.
+## 1. event_table.tsv (Fixed Schema)
 
-## File Inventory
-
-| File | Format | Rows | Description |
-|---|---|---|---|
-| `event_table.tsv` | TSV | n_events | Main output table |
-| `event_state_confidence.tsv` | TSV | n_events | State confidence and artifact risk |
-| `event_layer_effects.tsv` | TSV | n_events | Per-layer effect estimates |
-| `event_evidence_vectors.tsv` | TSV | n_events | Evidence vectors (z-scores) |
-| `model_diagnostics.tsv` | TSV | n_features | GLM diagnostics per feature |
-| `run_params.tsv` | TSV | n_params | Run parameters |
-| `event_network.graphml` | GraphML | n_edges | TF-peak-gene network (optional) |
-| `report.html` | HTML | — | Visual summary (optional) |
-
-## event_table.tsv
-
-One row per candidate regulatory event (peak-gene pair in a given context).
-
-| Field | Type | Range | Nullable | Description |
-|---|---|---|---|---|
-| `event_id` | str | — | No | Unique identifier |
-| `tf_name` | str | — | Yes | TF motif annotation |
-| `peak_id` | str | — | No | ATAC peak identifier |
-| `gene` | str | — | No | Target gene name |
-| `context` | str | — | Yes | Cell type / condition label |
-| `state` | str | {concordant, chromatin_primed, rna_only, discordant_opposite, null} | No | Biological state |
-| `state_confidence` | float | [0, 1] | No | Rule-refined confidence score |
-| `artifact_risk` | str | {low, medium, high} | No | Technical risk flag |
-| `artifact_reason` | str | — | Yes | Semicolon-separated reasons |
-| `event_pval` | float | [0, 1] | No | Event-level p-value |
-| `event_fdr` | float | [0, 1] | No | Event-level BH-corrected FDR |
-| `quality_score` | float | [0, 1] | No | Event quality score |
-| `atac_coef` | float | ℝ | No | Condition effect on ATAC (logFC scale) |
-| `atac_se` | float | (0, ∞) | No | Standard error |
-| `atac_pval` | float | [0, 1] | No | ATAC p-value |
-| `atac_fdr` | float | [0, 1] | No | ATAC BH-corrected FDR |
-| `atac_direction` | int | {-1, 0, 1} | No | ATAC effect direction |
-| `rna_coef` | float | ℝ | No | Condition effect on RNA (logFC scale) |
-| `rna_se` | float | (0, ∞) | No | Standard error |
-| `rna_pval` | float | [0, 1] | No | RNA p-value |
-| `rna_fdr` | float | [0, 1] | No | RNA BH-corrected FDR |
-| `rna_direction` | int | {-1, 0, 1} | No | RNA effect direction |
-| `rna_after_atac_coef` | float | ℝ | No | RNA effect after linked-peak adjustment |
-| `rna_after_atac_se` | float | (0, ∞) | No | Standard error |
-| `rna_after_atac_pval` | float | [0, 1] | No | Conditional p-value |
-| `rna_after_atac_fdr` | float | [0, 1] | No | Conditional BH-corrected FDR |
-
-### State Definitions
-
-| State | ATAC | RNA | Direction | Meaning |
-|---|---|---|---|---|
-| `concordant` | sig | sig | same | Intact cis-regulatory activation |
-| `chromatin_primed` | sig | not sig | — | Chromatin open, transcription not started |
-| `rna_only` | not sig | sig | — | RNA change not from local chromatin |
-| `discordant_opposite` | sig | sig | opposite | Opposite direction across layers |
-| `null` | not sig | not sig | — | No significant change |
-
-### Event-Level p-value
-
-Computed from state-specific combination of ATAC/RNA p-values:
-
-- `concordant` / `discordant_opposite`: `max(atac_pval, rna_pval)`
-- `chromatin_primed`: `atac_pval`
-- `rna_only`: `rna_pval`
-- `null`: `1.0`
-
-BH correction is applied across all events to produce `event_fdr`.
-
-## model_diagnostics.tsv
-
-One row per fitted feature (peak or gene).
+Main output: one row per candidate regulatory event.
 
 | Field | Type | Description |
 |---|---|---|
-| `feature_id` | str | Peak or gene identifier |
-| `modality` | str | ATAC or RNA |
-| `model_used` | str | GLM variant used (nb_default_alpha, nb_fixed_alpha, poisson_fallback, nb_simple_fallback) |
-| `family` | str | Distribution family (negative_binomial, poisson) |
-| `alpha` | float | NB dispersion parameter (None for Poisson) |
-| `alpha_estimated` | bool | Whether alpha was estimated per-feature |
-| `converged` | bool | Whether the GLM converged |
-| `dropped_covariates` | bool | Whether covariates were dropped (simplified fallback) |
-| `warning` | str | Diagnostic warning message |
+| `event_id` | str | Unique event identifier |
+| `tf_name` | str | TF annotation (from motifs) |
+| `peak_id` | str | Genomic interval (e.g. chr1:100-200) |
+| `gene` | str | Target gene |
+| `context` | str | Context label |
+| `link_source` | str | Link provenance (promoter, distal_250kb, external) |
+| `link_score` | float | Peak-gene link confidence (0-1) |
+| `state_family` | str | Coarse state group (concordant, chromatin_primed, etc.) |
+| `state` | str | Specific state (e.g. concordant_activation) |
+| `state_assignment_score` | float | Evidence score × link_score (ranking only) |
+| `raw_state_assignment_score` | float | Evidence score before link_score adjustment |
+| `state_support_score` | float | Directional evidence score (NOT formal FDR) |
+| `state_support_adjusted_score` | float | BH-style ranking adjustment |
+| `supporting_modalities` | str | Modalities supporting this state (;) |
+| `absent_modalities` | str | Modalities required to be absent (;) |
+| `conflicting_modalities` | str | Modalities conflicting with this state (;) |
+| `missing_modalities` | str | Required modalities not measured (;) |
+| `atac_coef` | float | ATAC condition effect (logFC) |
+| `atac_se` | float | ATAC standard error |
+| `atac_pval` | float | ATAC p-value |
+| `atac_fdr` | float | ATAC BH-corrected FDR |
+| `atac_direction` | int | ATAC direction (+1/-1/0) |
+| `rna_coef` | float | RNA condition effect (logFC) |
+| `rna_se` | float | RNA standard error |
+| `rna_pval` | float | RNA p-value |
+| `rna_fdr` | float | RNA BH-corrected FDR |
+| `rna_direction` | int | RNA direction (+1/-1/0) |
+| `rna_after_atac_coef` | float | RNA effect after ATAC adjustment |
+| `rna_after_atac_se` | float | Conditional SE |
+| `rna_after_atac_pval` | float | Conditional p-value |
+| `rna_after_atac_fdr` | float | Conditional FDR |
+| `artifact_risk` | str | low / medium / high |
+| `artifact_reason` | str | Semicolon-separated reasons |
+| `quality_score` | float | Event quality (0-1) |
 
-> `model_diagnostics.tsv` currently covers marginal ATAC and RNA GLMs only.
-> Conditional RNA-after-ATAC diagnostics are summarized in `event_table.tsv`.
+### Deprecated Fields (backward compatibility only)
 
-## event_network.graphml
+| Field | Replacement |
+|---|---|
+| `state_confidence_deprecated` | Use `state_assignment_score` |
+| `event_pval_deprecated` | Use `state_support_score` |
+| `event_fdr_deprecated` | Use `state_support_adjusted_score` |
 
-A Cytoscape/Gephi-compatible network with nodes (gene, peak, tf) and edges
-(peak→gene event, tf→peak motif). Edge attributes include `state`,
-`state_confidence`, `artifact_risk`, `event_fdr`, `atac_coef`, and `rna_coef`.
+These are not calibrated probabilities. `state_confidence` is not a posterior.
+
+## 2. event_modality_evidence.tsv (Long Format)
+
+One row per event × modality combination. Core multi-modal evidence table.
+
+| Field | Description |
+|---|---|
+| `event_id` | Links to event_table |
+| `modality` | Modality name (rna, atac, h3k27ac_cuttag, protein, etc.) |
+| `assay` | Assay type (RNA, ATAC, CUTTAG, PROTEIN, SPATIAL) |
+| `target` | Molecular target (H3K27ac, H3K27me3, etc.) |
+| `feature_id` | Feature measured (gene, peak, protein ID) |
+| `role` | Regulatory role (transcript_output, chromatin_accessibility, activating_mark, protein_output, etc.) |
+| `coef` | Condition effect (logFC) |
+| `se` | Standard error |
+| `pval` | Nominal p-value |
+| `fdr` | BH-corrected FDR |
+| `direction` | Effect direction (+1/-1/0) |
+| `quality_score` | Per-modality quality |
+| `model_used` | GLM model used |
+| `converged` | Whether GLM converged |
+
+## 3. conditional_effects.tsv (Diagnostic)
+
+Multi-model conditional decomposition results. **Diagnostic only; not used for state assignment.**
+
+| Field | Description |
+|---|---|
+| `event_id` | Links to event_table |
+| `model_name` | e.g. rna_after_atac, rna_after_h3k27ac, protein_after_rna |
+| `response_modality` | Response modality |
+| `conditioning_modalities` | Conditioning modalities (;) |
+| `condition_coef` | Condition coefficient after adjustment |
+| `condition_se` | Standard error |
+| `condition_pval` | P-value |
+| `condition_fdr` | FDR |
+| `attenuation` | Coef change relative to marginal |
+| `converged` | GLM convergence |
+| `model_used` | GLM family |
+
+## 4. model_diagnostics.tsv
+
+Per-feature GLM diagnostics for all modalities.
+
+| Field | Description |
+|---|---|
+| `feature_id` | Feature identifier |
+| `modality` | RNA, ATAC, CUTTAG, PROTEIN, etc. |
+| `model_used` | nb_default_alpha, nb_fixed_alpha, poisson_fallback, etc. |
+| `family` | negative_binomial, poisson |
+| `converged` | Whether GLM converged |
+| `dropped_covariates` | Whether covariates were dropped |
+| `warning` | Model warning message |
+
+## 5. run_params.tsv
+
+Key-value run parameters (condition, FDR threshold, versions, sample counts).
+
+## Optional Outputs
+
+- `event_state_confidence.tsv` — State classifier output (backward compat)
+- `event_layer_effects.tsv` — Per-layer ATAC/RNA effects
+- `event_evidence_vectors.tsv` — D_e evidence vectors
+- `event_network.graphml` — TF-peak-gene network
+- `report.html` — HTML summary report

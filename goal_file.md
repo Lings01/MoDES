@@ -696,7 +696,7 @@ artifact_reason = low_cuttag_depth;weak_region_match;protein_missingness
 
 八、P1 级：文档必须彻底同步
 
-14. 重写 docs/statistical_model.md
+14. ✅ [DONE] 重写 docs/statistical_model.md
 
 当前文件仍是 v0.1 RNA+ATAC 旧模型。 ￼
 
@@ -723,7 +723,7 @@ MoDES does not provide formal post-selection FDR unless calibration is performed
 
 ⸻
 
-15. 重写 docs/output_schema.md
+15. ✅ [DONE] 重写 docs/output_schema.md
 
 当前 schema 仍旧，仍写旧 5 个 RNA+ATAC state 和旧 event_pval/event_fdr。 ￼
 
@@ -743,7 +743,7 @@ event_fdr: deprecated alias
 
 ⸻
 
-16. 更新 CITATION.cff
+16. ✅ [DONE] 更新 CITATION.cff
 
 当前仍是 version: 0.1.0-alpha，abstract 仍称 “statistical framework”。 ￼
 
@@ -762,7 +762,7 @@ statistical framework that infers regulatory states
 
 ⸻
 
-17. 更新 docs/install_review.md
+17. ✅ [DONE] 更新 docs/install_review.md
 
 当前仍是 v1.0.0-rc.1，并写 91 tests、commit 509e66a 等旧信息。 ￼
 
