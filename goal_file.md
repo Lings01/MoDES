@@ -524,11 +524,11 @@ docs/statistical_model.md
 
 已经比以前好，但要再补：
 
-1. required_absent / missing 的完整语义
-2. state_support_adjusted_score 的过滤方向
-3. experimental modalities artifact risk 是 heuristic
-4. conditional_effects 是 diagnostic
-5. binary contrast limitation
+1. ✅ [DONE] required_absent / missing 的完整语义
+2. ✅ [DONE] state_support_adjusted_score 的过滤方向
+3. ✅ [DONE] experimental modalities artifact risk 是 heuristic
+4. ✅ [DONE] conditional_effects 是 diagnostic
+5. ✅ [DONE] binary contrast limitation
 
 ⸻
 
@@ -591,13 +591,13 @@ v2.0.1: Targeted Major Revision Fixes
 
 审稿人这轮意见基本正确。你现在离 Minor Revision 很近，但有 3 个必须立即修的硬点：
 
-1. mark_only vs active_enhancer_primed tie / priority bug
-2. required_absent missing/unlinked modality 被当成 not significant
-3. state_support_adjusted_score 过滤方向反了
+1. ✅ [DONE] mark_only vs active_enhancer_primed tie / priority bug
+2. ✅ [DONE] required_absent missing/unlinked modality 被当成 not significant
+3. ✅ [DONE] state_support_adjusted_score 过滤方向反了
 
 再加 2 个用户层面的硬点：
 
-4. README 推荐不存在的 min_confidence 参数
-5. README 用旧 state 名，和 v2.0 具体 state 不一致
+4. ✅ [DONE] README 推荐不存在的 min_confidence 参数
+5. ✅ [DONE] README 用旧 state 名，和 v2.0 具体 state 不一致
 
-如果你修掉这五个，再补 targeted tests，下一轮就可以从 Major Revision 降到 Minor Revision。当前版本还不能接收，但已经不是推倒重来的大修了。
+✅ 以上五个全部修复完毕，targeted tests 已补。下一轮可以从 Major Revision 降到 Minor Revision。
