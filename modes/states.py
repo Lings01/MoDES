@@ -176,12 +176,31 @@ class EvidenceBuilder:
                     record[f"{mod_name}_pval"] = mod_eff.p_value
                     record[f"{mod_name}_direction"] = mod_eff.direction
                     record[f"{mod_name}_coef"] = mod_eff.coef
-                else:
+                    record[f"{mod_name}_available"] = True
+                    record[f"{mod_name}_matched"] = True
+                    record[f"{mod_name}_measured"] = True
+                    record[f"{mod_name}_missing_reason"] = ""
+                elif mod_eff is not None:
+                    # Matched but effect computation failed (e.g., GLM non-convergence)
                     record[f"{mod_name}_z"] = 0.0
                     record[f"{mod_name}_fdr"] = 1.0
                     record[f"{mod_name}_pval"] = 1.0
                     record[f"{mod_name}_direction"] = 0
                     record[f"{mod_name}_coef"] = np.nan
+                    record[f"{mod_name}_available"] = True
+                    record[f"{mod_name}_matched"] = True
+                    record[f"{mod_name}_measured"] = False
+                    record[f"{mod_name}_missing_reason"] = "effect_estimation_failed"
+                else:
+                    record[f"{mod_name}_z"] = 0.0
+                    record[f"{mod_name}_fdr"] = np.nan
+                    record[f"{mod_name}_pval"] = np.nan
+                    record[f"{mod_name}_direction"] = 0
+                    record[f"{mod_name}_coef"] = np.nan
+                    record[f"{mod_name}_available"] = True
+                    record[f"{mod_name}_matched"] = False
+                    record[f"{mod_name}_measured"] = False
+                    record[f"{mod_name}_missing_reason"] = "no_feature_match"
             records.append(record)
 
         return pd.DataFrame(records)
@@ -390,24 +409,43 @@ class StateClassifier:
                 conflicting.append(f"{req.modality}(dir_mismatch)")
             # else: not sig, required not met
 
-        # Check required_absent (must be measured but NOT significant)
+        # Check required_absent (must be measured/matched but NOT significant)
         for ra in rule.required_absent:
             mod_ev = self._resolve_modality_evidence(ev, ra)
-            sig = mod_ev["fdr"] < self.fdr_threshold if mod_ev else False
+            require_avail = getattr(ra, 'require_available', True)
 
+            # Check if modality is actually available and matched
             if mod_ev is None:
-                if getattr(ra, 'require_available', True):
+                if require_avail:
                     n_missing += 1
-                    missing_mods.append(ra.modality)
+                    missing_mods.append(f"{ra.modality}(unavailable)")
+                    n_absent_fail += 1  # Rule invalid if require_available
                 else:
                     n_absent_ok += 1
                     absent.append(ra.modality)
-            elif not sig:
-                n_absent_ok += 1
-                absent.append(ra.modality)
+            elif not mod_ev.get("available", True) or not mod_ev.get("matched", True):
+                if require_avail:
+                    n_missing += 1
+                    missing_mods.append(f"{ra.modality}({mod_ev.get('missing_reason', 'unmatched')})")
+                    n_absent_fail += 1
+                else:
+                    n_absent_ok += 1
+                    absent.append(ra.modality)
+            elif not mod_ev.get("measured", True):
+                if require_avail:
+                    n_missing += 1
+                    missing_mods.append(f"{ra.modality}(not_measured)")
+                    n_absent_fail += 1
+                else:
+                    n_absent_ok += 1
             else:
-                n_absent_fail += 1
-                conflicting.append(f"{ra.modality}(should_be_absent)")
+                sig = mod_ev["fdr"] < self.fdr_threshold
+                if not sig:
+                    n_absent_ok += 1
+                    absent.append(ra.modality)
+                else:
+                    n_absent_fail += 1
+                    conflicting.append(f"{ra.modality}(should_be_absent)")
 
         # Check forbidden
         for fb in rule.forbidden:
@@ -457,7 +495,12 @@ class StateClassifier:
         conflict_penalty = 0.5 ** n_conflicts if n_conflicts > 0 else 1.0
 
         # Specificity bonus for states with more required evidence
-        specificity = 1.0 + 0.3 * max(n_required - 1, 0)
+        specificity = (
+            1.0
+            + 0.30 * max(n_required - 1, 0)
+            + 0.20 * n_absent_ok
+            + 0.10 * len(rule.forbidden)
+        )
 
         # Assignment score
         assignment_score = (support_score * quality * conflict_penalty *
@@ -568,6 +611,10 @@ class StateClassifier:
                 "direction": int(row.get(f"{mod_name}_direction", 0)),
                 "pval": float(row.get(f"{mod_name}_pval", 1.0)),
                 "coef": float(row.get(f"{mod_name}_coef", 0.0)),
+                "available": bool(row.get(f"{mod_name}_available", True)),
+                "matched": bool(row.get(f"{mod_name}_matched", True)),
+                "measured": bool(row.get(f"{mod_name}_measured", True)),
+                "missing_reason": str(row.get(f"{mod_name}_missing_reason", "")),
             }
         return ev
 

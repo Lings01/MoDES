@@ -54,16 +54,21 @@ peak-level differential accessibility alone.
 
 ### 1.3 Biological State Classification
 
-MoDES v2.0 classifies regulatory events into biological states based on the available
-modalities. With RNA+ATAC (the core layer), five states are available:
+MoDES v2.0 classifies events using a two-level naming scheme: ``state_family`` (coarse
+grouping) and ``state`` (specific direction-aware label). With RNA+ATAC, nine
+full-direction states are available:
 
-| State | Pattern | Biological Interpretation |
-|---|---|---|
-| `concordant` | ATAC↑ RNA↑ same direction | ATAC and RNA change concordantly in the same direction under the tested contrast |
-| `chromatin_primed` | ATAC↑ RNA→ | Chromatin accessibility changes without corresponding RNA change |
-| `rna_only` | ATAC→ RNA↑ | RNA change not accompanied by local chromatin accessibility change |
-| `discordant_opposite` | ATAC↑ RNA↓ opposite direction | ATAC and RNA change in opposite directions |
-| `null` | ATAC→ RNA→ | No significant change under the current condition |
+| state_family | state | Pattern | Description |
+|---|---|---|---|
+| `concordant` | `concordant_activation` | ATAC↑ RNA↑ | Accessibility and RNA both increase |
+| `concordant` | `concordant_repression` | ATAC↓ RNA↓ | Accessibility and RNA both decrease |
+| `discordant` | `discordant_opening_repression` | ATAC↑ RNA↓ | ATAC increases while RNA decreases |
+| `discordant` | `discordant_closing_activation` | ATAC↓ RNA↑ | ATAC decreases while RNA increases |
+| `chromatin_primed` | `chromatin_open_primed` | ATAC↑ RNA not sig | Open chromatin without RNA response |
+| `chromatin_primed` | `chromatin_closed_primed` | ATAC↓ RNA not sig | Closing chromatin without RNA response |
+| `rna_only` | `rna_up_only` | RNA↑ ATAC not sig | RNA increase without linked ATAC change |
+| `rna_only` | `rna_down_only` | RNA↓ ATAC not sig | RNA decrease without linked ATAC change |
+| `null` | `null` | no significant evidence | No event-state signal assigned |
 
 When epigenomic (CUT&Tag) or protein data are provided via the v2.0 multi-modal API,
 additional states become available:
@@ -92,6 +97,11 @@ Each event also carries an **artifact_risk** flag:
 This two-layer design (biological state + artifact risk) is more informative than labeling
 events as "artifact": an event can be both `chromatin_primed` *and* `artifact_risk = high`,
 preserving the biological signal while flagging quality concerns.
+
+> **Note**: `artifact_risk` is a heuristic quality flag. For core RNA+ATAC modalities it
+> uses depth, detection, and z-score diagnostics. For experimental modalities (CUT&Tag,
+> protein, spatial) it currently uses available depth and region-match diagnostics; it
+> is not a validated assay-specific QC classifier.
 
 ---
 
@@ -199,20 +209,20 @@ result = modes._assemble_results()
 ### 4.3 Filtering Results
 
 ```python
-# View only concordant events
-conc = result.filter(state="concordant")
+# View concordant family events
+conc = result.filter(state_family="concordant")
+# Or specific states
+conc_act = result.filter(state="concordant_activation")
+conc_rep = result.filter(state="concordant_repression")
 
 # Exclude high artifact-risk events
 clean = result.filter(exclude_high_artifact=True)
 
-# Filter by event-level FDR
-sig = result.filter(max_event_fdr=0.1)
-
-# Combine filters
+# Use assignment/support scores for ranking-oriented filtering
 trusted = result.filter(
-    state="concordant",
-    min_confidence=0.8,
-    max_event_fdr=0.05,
+    state_family="concordant",
+    min_assignment_score=0.8,
+    min_state_support_adjusted_score=2.0,
     exclude_high_artifact=True,
 )
 ```
@@ -538,8 +548,8 @@ Recommended filtering pipeline:
 
 ```python
 trusted = result.filter(
-    min_confidence=0.7,
-    max_event_fdr=0.1,
+    min_assignment_score=0.7,
+    min_state_support_adjusted_score=2.0,
     exclude_high_artifact=True,
 )
 ```

@@ -705,6 +705,7 @@ class MoDESResult:
         exclude_high_artifact: bool = False,
         max_event_fdr: float | None = None,
         max_state_support_adjusted_score: float | None = None,
+        min_state_support_adjusted_score: float | None = None,
         min_quality_score: float | None = None,
         genes: list[str] | None = None,
         peaks: list[str] | None = None,
@@ -726,12 +727,22 @@ class MoDESResult:
             if col in df.columns:
                 df = df[df[col] >= min_assignment_score]
         if max_event_fdr is not None:
-            warnings.warn("max_event_fdr is deprecated; use max_state_support_adjusted_score",
-                          DeprecationWarning)
-            col = "state_support_adjusted_score" if "state_support_adjusted_score" in df.columns else "event_fdr_deprecated"
-            df = df[df[col].fillna(1.0) <= max_event_fdr]
+            warnings.warn(
+                "max_event_fdr is deprecated. Use min_state_support_adjusted_score "
+                "(higher = stronger evidence) or max_state_support_pseudo_q.",
+                DeprecationWarning,
+            )
+            import numpy as _np
+            score_thr = -_np.log10(max(max_event_fdr, 1e-15))
+            col = "state_support_adjusted_score" if "state_support_adjusted_score" in df.columns else None
+            if col:
+                df = df[df[col].fillna(0.0) >= score_thr]
+        # NOTE: max_state_support_adjusted_score is kept for backward compat but
+        # semantically confusing. Use min_state_support_adjusted_score for new code.
         if max_state_support_adjusted_score is not None and "state_support_adjusted_score" in df.columns:
-            df = df[df["state_support_adjusted_score"] <= max_state_support_adjusted_score]
+            df = df[df["state_support_adjusted_score"] >= max_state_support_adjusted_score]
+        if min_state_support_adjusted_score is not None and "state_support_adjusted_score" in df.columns:
+            df = df[df["state_support_adjusted_score"] >= min_state_support_adjusted_score]
         if fdr_threshold is not None:
             df = df[(df["atac_fdr"] < fdr_threshold) | (df["rna_fdr"] < fdr_threshold)]
         if exclude_high_artifact and "artifact_risk" in df.columns:

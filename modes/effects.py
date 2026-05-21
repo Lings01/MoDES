@@ -256,8 +256,10 @@ class EffectEstimator:
             categories = sorted(set(cond))
             if len(categories) != 2:
                 raise NotImplementedError(
-                    "MoDES v0.1 supports only binary condition. "
-                    "Please run pairwise contrasts or implement a contrast matrix."
+                    "MoDES v2.0 main effect-estimation pipeline supports binary "
+                    "contrasts only. For multi-condition designs, run explicit "
+                    "pairwise contrasts or use the experimental dynamic helper APIs. "
+                    "Full multi-condition modeling is planned."
                 )
             # Determine reference and target levels
             if self.contrast is not None:
